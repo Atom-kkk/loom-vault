@@ -1075,6 +1075,7 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
 }
 .slot-img.face { aspect-ratio: 4 / 5; }
 .slot-img.fit { aspect-ratio: 2 / 3; }
+.slot-img.pose { aspect-ratio: 3 / 4; }
 .slot-meta { font-size: 11px; color: var(--text-2); font-family: var(--mono); text-align: center; }
 .slot-ops { display: flex; gap: 6px; }
 .comp-plus {

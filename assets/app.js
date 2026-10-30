@@ -202,6 +202,7 @@ window.Vault = (function () {
       <div class="nav-label">参考图库</div>
       ${item('outfits', '服饰参考', 'shirt', (window.REF && REF.counts().outfits) || '')}
       ${item('faces', '人脸参考', 'user', (window.REF && REF.counts().faces) || '')}
+      ${item('poses', '姿势参考', 'user', (window.REF && REF.counts().poses) || '')}
       ${item('composer', '提示词组合', 'spark', (window.REF && REF.stageCount()) || '')}
       ${item('snippets', '提示词片段', 'list', (window.SNIP && SNIP.count()) || '')}
       <div class="nav-label">本地资产</div>

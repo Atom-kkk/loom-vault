@@ -16,8 +16,9 @@ window.REF = (function () {
   const state = {
     outfits: { meta: null, items: [], shown: 0, q: '', cat: '', loading: null },
     faces: { meta: null, items: [], shown: 0, q: '', sec: '', len: '', loading: null },
+    poses: { meta: null, items: [], shown: 0, q: '', cat: '', cls: '', angle: '', loading: null },
     lb: { kind: '', index: 0, open: false },
-    stage: { face: null, outfit: null }
+    stage: { face: null, outfit: null, pose: null }
   };
 
   const esc = U.esc;
@@ -34,6 +35,10 @@ window.REF = (function () {
     'https://fastly.jsdelivr.net/gh/Atom-kkk/AI-Clothing-Resource-Library@main/assets/img/'
   ];
   const HI_FACE = 'https://ai-portrait-gallery.pages.dev/img/full/';
+  const HI_POSE = [
+    'https://atom-kkk.github.io/AI-Pose-Resource-Library/',
+    'https://ai-pose-gallery.pages.dev/'
+  ];
   const HI_TIMEOUT = 12000;
   const HI_MAX = 40;                 // 最多缓存多少张原图
   const hiMem = new Map();
@@ -44,9 +49,13 @@ window.REF = (function () {
 
   function hiUrlsOf(id) {
     if (!id) return [];
-    return /^[A-Z]{2,4}-\d+$/.test(id)
-      ? HI_CLOTH.map(base => base + id + '.webp')
-      : [HI_FACE + id + '.png'];
+    if (/^[A-Z]{2,4}-\d+$/.test(id)) {
+      return HI_CLOTH.map(base => base + id + '.webp');
+    }
+    if (/^full_|^upper_|^half_|^sexy_|^standard_|^dual_/.test(id)) {
+      return HI_POSE.map(base => base + 'img/' + id + '.png');
+    }
+    return [HI_FACE + id + '.png'];
   }
 
   async function cacheIndex() {
@@ -132,11 +141,11 @@ window.REF = (function () {
   }
 
   function pushHist(text, note) {
-    const { face, outfit } = state.stage;
-    if (!face && !outfit) return;
+    const { face, outfit, pose } = state.stage;
+    if (!face && !outfit && !pose) return;
     if (!text || !text.trim()) return;
     const list = loadHist();
-    const sig = `${face?.id || '-'}|${outfit?.id || '-'}|${text.trim()}`;
+    const sig = `${face?.id || '-'}|${outfit?.id || '-'}|${pose?.id || '-'}|${text.trim()}`;
     // 同签名只更新时间，不重复堆积
     const old = list.findIndex(h => h.sig === sig);
     if (old >= 0) list.splice(old, 1);
@@ -145,6 +154,7 @@ window.REF = (function () {
       sig,
       face: face ? { id: face.id, thumb: face.thumb, len: face.len, style: face.style || '' } : null,
       outfit: outfit ? { id: outfit.id, thumb: outfit.thumb, cat: outfit.cat, kw: outfit.kw || '' } : null,
+      pose: pose ? { id: pose.id, thumb: pose.thumb, name: pose.name || '', angle: pose.angle || '' } : null,
       text: text.trim(),
       note: note || '',
       createdAt: Date.now()
@@ -163,6 +173,7 @@ window.REF = (function () {
           <div class="hist-imgs">
             ${h.face ? `<img src="${esc(h.face.thumb)}" alt="">` : '<div class="hist-ph">无脸</div>'}
             ${h.outfit ? `<img src="${esc(h.outfit.thumb)}" alt="">` : '<div class="hist-ph">无衣</div>'}
+            ${h.pose ? `<img src="${esc(h.pose.thumb)}" alt="">` : '<div class="hist-ph">无姿</div>'}
           </div>
           <div class="hist-main">
             <div class="hist-text">${esc(h.text.slice(0, 90))}${h.text.length > 90 ? '…' : ''}</div>
@@ -200,7 +211,7 @@ window.REF = (function () {
 
   async function preload() {
     try {
-      await Promise.all([load('outfits'), load('faces')]);
+      await Promise.all([load('outfits'), load('faces'), load('poses')]);
     } catch (e) {
       console.warn('参考库加载失败', e);
     }
@@ -208,16 +219,17 @@ window.REF = (function () {
   }
 
   function counts() {
-    return { outfits: state.outfits.items.length, faces: state.faces.items.length };
+    return { outfits: state.outfits.items.length, faces: state.faces.items.length, poses: state.poses.items.length };
   }
   function stageCount() {
-    return (state.stage.face ? 1 : 0) + (state.stage.outfit ? 1 : 0);
+    return (state.stage.face ? 1 : 0) + (state.stage.outfit ? 1 : 0) + (state.stage.pose ? 1 : 0);
   }
 
   /* ============================================================
      筛选
      ============================================================ */
   const OUTFIT_CATS = ['春', '夏', '秋', '冬', '内衣', '派对', '泳装', '性感'];
+  const POSE_CLS = ['站姿', '坐姿', '坐位', '立位', '蹲姿', '跪立', '趴卧', '侧卧位', '前倾', '后仰・挺背', '扭身', '贴身', '可爱系', '性感・大胆系', '特殊'];
 
   function filtered(kind) {
     const st = state[kind];
@@ -230,6 +242,19 @@ window.REF = (function () {
         arr = arr.filter(i =>
           i.id.toLowerCase().includes(q) ||
           (i.kw || '').toLowerCase().includes(q) ||
+          (i.cat || '').toLowerCase().includes(q));
+      }
+    } else if (kind === 'poses') {
+      if (st.cat) arr = arr.filter(i => i.cat === st.cat);        // 体系
+      if (st.cls) arr = arr.filter(i => i.cls === st.cls);        // 动作分类
+      if (st.angle) arr = arr.filter(i => i.angle === st.angle);  // 视角
+      if (st.q) {
+        const q = st.q.toLowerCase();
+        arr = arr.filter(i =>
+          i.id.toLowerCase().includes(q) ||
+          (i.name || '').toLowerCase().includes(q) ||
+          (i.code || '').toLowerCase().includes(q) ||
+          (i.cls || '').toLowerCase().includes(q) ||
           (i.cat || '').toLowerCase().includes(q));
       }
     } else {
@@ -250,7 +275,7 @@ window.REF = (function () {
     const st = state[kind];
     const m = {};
     st.items.forEach(i => {
-      const k = kind === 'outfits' ? i.cat : String(i.sec);
+      const k = kind === 'outfits' ? i.cat : (kind === 'poses' ? i.cat : String(i.sec));
       m[k] = (m[k] || 0) + 1;
     });
     return m;
@@ -266,6 +291,15 @@ window.REF = (function () {
         <div class="ref-hover">
           <div class="ref-id">${esc(item.id)} · ${esc(item.cat)}</div>
           <div class="ref-kw">${esc(item.kw || '')}</div>
+        </div>
+      </div>`;
+    }
+    if (kind === 'poses') {
+      return `<div class="ref-card" data-ref="poses" data-index="${index}">
+        <img src="${esc(item.thumb)}" loading="lazy" decoding="async" alt="${esc(item.id)}">
+        <div class="ref-hover">
+          <div class="ref-id">${esc(item.code || item.id)} · ${esc(item.cls)}</div>
+          <div class="ref-kw">${esc(item.name || '')} · ${esc(item.angle || '')}</div>
         </div>
       </div>`;
     }
@@ -293,6 +327,25 @@ window.REF = (function () {
     }
     const sc = catCounts('faces');
     const lengths = st.meta?.lengths || [];
+    if (kind === 'poses') {
+      const pc = catCounts('poses');
+      const POSE_CATS = [...new Set(st.items.map(i => i.cat))];
+      const POSE_ANGLES = ['正面', '侧面', '斜侧', '俯视', '仰视'];
+      return `<div class="gallery-toolbar">
+        <div class="search-box">${V.icon('search', 15)}<input id="ref-q" type="text" placeholder="搜索姿势名 / 编号 / 分类" value="${esc(st.q)}"></div>
+        <button class="chip ${!st.cat ? 'active' : ''}" data-refcat="">全部体系 <span class="n">${st.items.length}</span></button>
+        ${POSE_CATS.map(c => `<button class="chip ${st.cat === c ? 'active' : ''}" data-refcat="${esc(c)}">${esc(c)} <span class="n">${pc[c] || 0}</span></button>`).join('')}
+      </div>
+      <div class="gallery-toolbar" style="margin-top:6px">
+        <button class="chip ${!st.cls ? 'active' : ''}" data-refcls="">全部动作</button>
+        ${POSE_CLS.map(c => `<button class="chip ${st.cls === c ? 'active' : ''}" data-refcls="${esc(c)}">${esc(c)}</button>`).join('')}
+        <span style="width:1px;height:22px;background:var(--line-strong);margin:0 4px"></span>
+        <button class="chip ${!st.angle ? 'active' : ''}" data-refangle="">全部视角</button>
+        ${POSE_ANGLES.map(a => `<button class="chip ${st.angle === a ? 'active' : ''}" data-refangle="${esc(a)}">${esc(a)}</button>`).join('')}
+        <div class="spacer"></div>
+        <span class="ref-total">${list.length} 张</span>
+      </div>`;
+    }
     return `<div class="gallery-toolbar">
       <div class="search-box">${V.icon('search', 15)}<input id="ref-q" type="text" placeholder="搜索编号 / 风格 / 发长" value="${esc(st.q)}"></div>
       <button class="chip ${st.sec === '' ? 'active' : ''}" data-refsec="">全部 <span class="n">${st.items.length}</span></button>
@@ -330,6 +383,12 @@ window.REF = (function () {
     }
     container.querySelectorAll('[data-refcat]').forEach(b => {
       b.onclick = () => { st.cat = b.dataset.refcat; st.shown = PAGE; repaint(container, kind, true); };
+    });
+    container.querySelectorAll('[data-refcls]').forEach(b => {
+      b.onclick = () => { st.cls = b.dataset.refcls; st.shown = PAGE; repaint(container, kind, true); };
+    });
+    container.querySelectorAll('[data-refangle]').forEach(b => {
+      b.onclick = () => { st.angle = b.dataset.refangle; st.shown = PAGE; repaint(container, kind, true); };
     });
     container.querySelectorAll('[data-refsec]').forEach(b => {
       b.onclick = () => { st.sec = b.dataset.refsec; st.shown = PAGE; repaint(container, kind, true); };
@@ -413,7 +472,9 @@ window.REF = (function () {
     const n = meta?.count || 0;
     const src = kind === 'outfits'
       ? '图片与原始数据著作权归 ギア（@giaaibusi）所有，来源「衣装集 COSTUME-DB-01」，可在其许可范围内用于创作，禁止再分发图片数据本身。'
-      : '图片署名 ギア / あぎ（@agi_aibusi），原始图库 AIモデル顔データベース，CC0。';
+      : kind === 'poses'
+        ? '图片与原始数据著作权归原作者 ギア 所有，来源 POSE Atlas（ai-pose-gallery），可用于创作参考，但禁止再分发、转售图片数据本身。'
+        : '图片署名 ギア / あぎ（@agi_aibusi），原始图库 AIモデル顔データベース，CC0。';
     return `<p class="ref-note">
       共 ${n} 张参考缩略图，已全部本地化到 <code>reference/${kind}/</code>，断网可用。<br>
       ${esc(src)}<br>
@@ -451,18 +512,21 @@ window.REF = (function () {
 
     const lb = document.querySelector('#lightbox');
     const isOutfit = kind === 'outfits';
+    const isPose = kind === 'poses';
     const sections = state.faces.meta?.sections || [];
     const lengths = state.faces.meta?.lengths || [];
-    const staged = isOutfit ? state.stage.outfit?.id === item.id : state.stage.face?.id === item.id;
+    const staged = isPose ? state.stage.pose?.id === item.id
+      : isOutfit ? state.stage.outfit?.id === item.id : state.stage.face?.id === item.id;
 
     lb.innerHTML = `
       <div class="lb-stage">
         <div class="lb-topbar">
           <span class="lb-id">${esc(item.id)}</span>
-          <span class="badge">${esc(isOutfit ? item.cat : (sections[item.sec]?.name || '参考图'))}</span>
-          ${!isOutfit && lengths[item.len] ? `<span class="badge">${esc(lengths[item.len])}</span>` : ''}
+          <span class="badge">${esc(isPose ? (item.cat || '姿势') : (isOutfit ? item.cat : (sections[item.sec]?.name || '参考图')))}</span>
+          ${!isOutfit && !isPose && lengths[item.len] ? `<span class="badge">${esc(lengths[item.len])}</span>` : ''}
+          ${isPose ? `<span class="badge">${esc(item.angle || '')}</span>` : ''}
           <div class="spacer"></div>
-          <button class="icon-btn ${staged ? 'on' : ''}" data-refact="ref-stage" title="${isOutfit ? '用作服装' : '用作脸'}">${V.icon(isOutfit ? 'shirt' : 'user', 15)}</button>
+          <button class="icon-btn ${staged ? 'on' : ''}" data-refact="ref-stage" title="${isPose ? '用作姿势' : isOutfit ? '用作服装' : '用作脸'}">${V.icon(isPose ? 'user' : isOutfit ? 'shirt' : 'user', 15)}</button>
           <button class="icon-btn" data-refact="ref-save" title="存入我的图库">${V.icon('plus', 15)}</button>
           <button class="icon-btn" data-refact="ref-download" title="下载">${V.icon('down', 15)}</button>
           <button class="icon-btn" data-refact="ref-close" title="关闭 (Esc)">${V.icon('close', 15)}</button>
@@ -479,7 +543,7 @@ window.REF = (function () {
       </div>
       <aside class="lb-panel">
         <div class="lb-panel-head">
-          <h3>${isOutfit ? '关键词' : '档案'}</h3>
+          <h3>${isOutfit ? '关键词' : isPose ? '姿势档案' : '档案'}</h3>
           <div class="spacer"></div>
           <button class="btn sm" data-refact="ref-copy-kw">${V.icon('copy', 13)} 复制</button>
           <button class="btn sm primary" data-refact="ref-write">${V.icon('spark', 13)} AI 写成提示词</button>
@@ -493,6 +557,21 @@ window.REF = (function () {
             <div class="section">
               <div class="section-title">说明<span></span></div>
               <p class="ref-desc">纯服装参考，不含人物。关键词为英文短语，可直接拼进提示词，也可以让智能体扩写成完整描述。</p>
+            </div>
+          ` : isPose ? `
+            <dl class="kv">
+              <dt>姿势编号</dt><dd>${esc(item.code || '—')}</dd>
+              <dt>体系</dt><dd>${esc(item.cat || '—')}</dd>
+              <dt>分类</dt><dd>${esc(item.cls || '—')}</dd>
+              <dt>视角</dt><dd>${esc(item.angle || '—')}</dd>
+              <dt>姿势名</dt><dd>${esc(item.name || '—')}</dd>
+            </dl>
+            <div class="section">
+              <div class="section-title">说明<span></span></div>
+              <p class="ref-desc">人体姿势线稿参考，用于在生成图中固定姿态。可加入组合台，和脸、服装拼成一条完整提示词。</p>
+            </div>
+            <div style="display:flex;gap:6px;margin-top:12px">
+              <button class="btn sm ghost" data-refact="ref-copy-kw">${V.icon('copy', 13)} 复制姿势名</button>
             </div>
           ` : `
             <dl class="kv">
@@ -512,7 +591,7 @@ window.REF = (function () {
           `}
           <div style="display:flex;gap:8px;margin-top:16px">
             <button class="btn" style="flex:1;justify-content:center" data-refact="ref-stage">
-              ${V.icon(isOutfit ? 'shirt' : 'user', 14)} ${staged ? '已加入组合台' : (isOutfit ? '用作服装' : '用作脸')}
+              ${V.icon(isPose ? 'user' : isOutfit ? 'shirt' : 'user', 14)} ${staged ? '已加入组合台' : (isPose ? '用作姿势' : isOutfit ? '用作服装' : '用作脸')}
             </button>
             <button class="btn" style="flex:1;justify-content:center" data-refact="ref-save">
               ${V.icon('plus', 14)} 存入图库
@@ -592,7 +671,9 @@ window.REF = (function () {
 
       const now = Date.now();
       const pv = V.newVersion(
-        kind === 'outfits' ? outfitPrompt(item) : (item.style || ''),
+        kind === 'outfits' ? outfitPrompt(item)
+          : kind === 'poses' ? (item.name || '') + ', ' + (item.angle || '') + ' view'
+          : (item.style || ''),
         '', 'import', `参考库 ${item.id}`
       );
       const dims = await new Promise(r => {
@@ -609,7 +690,7 @@ window.REF = (function () {
         size: blob.size, mime: blob.type,
         width: dims.w, height: dims.h,
         favorite: false,
-        tags: [item.id, kind === 'outfits' ? (item.cat || '') : 'face'].filter(Boolean),
+        tags: [item.id, kind === 'outfits' ? (item.cat || '') : kind === 'poses' ? (item.cls || '') : 'face'].filter(Boolean),
         note: `来自参考库 ${item.id}`,
         source: 'import',
         modelName: '', sampler: '', scheduler: '', steps: null, cfg: null,
@@ -630,7 +711,9 @@ window.REF = (function () {
     const agent = AI.agentById(AI.lastAgentId());
     const base = kind === 'outfits'
       ? `这组服装关键词：${item.kw}`
-      : `一张人脸参考图（${state.faces.meta?.lengths?.[item.len] || ''}${item.style ? '，' + item.style : ''}），分区：${state.faces.meta?.sections?.[item.sec]?.name || ''}`;
+      : kind === 'poses'
+        ? `一个姿势参考：${item.name}（${item.cat}，${item.cls}，${item.angle}视角）`
+        : `一张人脸参考图（${state.faces.meta?.lengths?.[item.len] || ''}${item.style ? '，' + item.style : ''}），分区：${state.faces.meta?.sections?.[item.sec]?.name || ''}`;
 
     V.openModal({
       title: '让智能体写成提示词',
@@ -685,7 +768,7 @@ window.REF = (function () {
      组合台：脸 + 服装 → 一条完整提示词
      ============================================================ */
   function composeText() {
-    const { face, outfit } = state.stage;
+    const { face, outfit, pose } = state.stage;
     const bits = [];
 
     if (face) {
@@ -699,14 +782,18 @@ window.REF = (function () {
 
     if (outfit) bits.push('wearing ' + outfit.kw);
 
-    bits.push('standing, natural pose');
+    if (pose) bits.push(pose.name + ', ' + pose.angle + ' view');
+    else bits.push('standing, natural pose');
+
     bits.push('soft window light, 85mm lens, shallow depth of field');
     bits.push('photorealistic, fine skin detail, subtle film grain');
     return bits.join(', ');
   }
 
   function stageOf(kind) {
-    return kind === 'outfits' ? 'outfit' : 'face';
+    if (kind === 'outfits') return 'outfit';
+    if (kind === 'poses') return 'pose';
+    return 'face';
   }
 
   function setStage(kind, item) {
@@ -717,13 +804,14 @@ window.REF = (function () {
   function slotHTML(role) {
     const item = state.stage[role];
     const isFace = role === 'face';
-    const label = isFace ? '脸' : '服装';
-    const kind = isFace ? 'faces' : 'outfits';
+    const isPose = role === 'pose';
+    const label = isFace ? '脸' : isPose ? '姿势' : '服装';
+    const kind = isFace ? 'faces' : isPose ? 'poses' : 'outfits';
     if (!item) {
       return `<div class="comp-slot empty-slot">
         <div class="slot-label">${label}</div>
         <div class="slot-empty">
-          ${V.icon(isFace ? 'user' : 'shirt', 26)}
+          ${V.icon(isPose ? 'user' : isFace ? 'user' : 'shirt', 26)}
           <span>还没有选${label}</span>
         </div>
         <button class="btn sm" data-compick="${kind}">选择${label}</button>
@@ -731,10 +819,12 @@ window.REF = (function () {
     }
     const meta = isFace
       ? (state.faces.meta?.lengths?.[item.len] || '') + (item.style ? ' · ' + item.style : '')
-      : (item.cat || '');
+      : isPose
+        ? (item.name || '') + ' · ' + (item.angle || '')
+        : (item.cat || '');
     return `<div class="comp-slot">
       <div class="slot-label">${label}</div>
-      <img class="slot-img ${isFace ? 'face' : 'fit'}" src="${esc(item.thumb)}" alt="">
+      <img class="slot-img ${isFace ? 'face' : isPose ? 'pose' : 'fit'}" src="${esc(item.thumb)}" alt="">
       <div class="slot-meta">${esc(meta || '—')}</div>
       <div class="slot-ops">
         <button class="btn sm" data-compick="${kind}">换一张</button>
@@ -748,12 +838,12 @@ window.REF = (function () {
     sub: () => {
       const n = stageCount();
       return n
-        ? `已选 ${n} 项 · 一条完整提示词由「人物 + 服装 + 场景 + 画质」四段拼成`
-        : '从参考库挑一张脸、一套衣服，直接拼成出图提示词';
+        ? `已选 ${n} 项 · 一条完整提示词由「人物 + 服装 + 姿势 + 画质」拼成`
+        : '从参考库挑一张脸、一套衣服、一个姿势，直接拼成出图提示词';
     },
     actions: () => `<button class="btn" data-act="comp-clear">清空</button>`,
     render: async (c) => {
-      try { await Promise.all([load('faces'), load('outfits')]); } catch { }
+      try { await Promise.all([load('faces'), load('outfits'), load('poses')]); } catch { }
 
       const text = restoreText != null ? restoreText : composeText();
       restoreText = null;
@@ -763,6 +853,8 @@ window.REF = (function () {
             ${slotHTML('face')}
             <div class="comp-plus">+</div>
             ${slotHTML('outfit')}
+            <div class="comp-plus">+</div>
+            ${slotHTML('pose')}
           </div>
           <div class="comp-right">
             <div class="section-title" style="margin-top:0">拼接结果<span></span></div>
@@ -775,8 +867,8 @@ window.REF = (function () {
               <span class="comp-agent">智能体：${esc(AI.agentById(AI.lastAgentId())?.name || '—')}</span>
             </div>
             <div class="comp-note">
-              <b>怎么用：</b>这条提示词描述的是「长相大致特征 + 服装款式」。想真正固定同一张脸，把选中的脸图作为参考图 / 图生图输入，比纯文字更准。<br>
-              人物来源 <code>${esc(state.stage.face?.id?.slice(0, 10) || '未选')}</code>，服装来源 <code>${esc(state.stage.outfit?.id || '未选')}</code>。
+              <b>怎么用：</b>这条提示词描述的是「长相大致特征 + 服装款式 + 身体姿态」。想真正固定同一张脸，把选中的脸图作为参考图 / 图生图输入，比纯文字更准。<br>
+              人物来源 <code>${esc(state.stage.face?.id?.slice(0, 10) || '未选')}</code>，服装来源 <code>${esc(state.stage.outfit?.id || '未选')}</code>，姿势来源 <code>${esc(state.stage.pose?.id || '未选')}</code>。
             </div>
           </div>
         </div>
@@ -785,7 +877,7 @@ window.REF = (function () {
   });
 
   V.on('comp-clear', () => {
-    state.stage = { face: null, outfit: null };
+    state.stage = { face: null, outfit: null, pose: null };
     V.renderNav();
     V.render();
   });
@@ -810,13 +902,14 @@ window.REF = (function () {
   });
 
   V.on('comp-remix', async () => {
-    const { face, outfit } = state.stage;
-    if (!face && !outfit) return V.toast('先从参考库挑一张脸或一套衣服', 'err');
+    const { face, outfit, pose } = state.stage;
+    if (!face && !outfit && !pose) return V.toast('先从参考库挑一张脸、一套衣服或一个姿势', 'err');
     const agent = AI.agentById(AI.lastAgentId());
     const brief = [
       face ? `人物：一位女性，${state.faces.meta?.lengths?.[face.len] || ''}，正面人像` : '人物：一位女性',
       outfit ? `服装：${outfit.kw}` : '',
-      '请写一条完整的文生图提示词，把人物与服装自然地融合在一张照片里'
+      pose ? `姿势：${pose.name}（${pose.cat}，${pose.angle}视角）` : '',
+      '请写一条完整的文生图提示词，把人物、服装与姿势自然地融合在一张照片里'
     ].filter(Boolean).join('\n');
 
     const ta = document.querySelector('#comp-text');
@@ -838,7 +931,8 @@ window.REF = (function () {
   /* ---------------- 选择器 ---------------- */
   function picker(kind) {
     const isFace = kind === 'faces';
-    const title = isFace ? '选一张脸' : '选一套服装';
+    const isPose = kind === 'poses';
+    const title = isFace ? '选一张脸' : isPose ? '选一个姿势' : '选一套服装';
     let q = '';
     let shown = PAGE;
 
@@ -846,9 +940,11 @@ window.REF = (function () {
       let arr = state[kind].items;
       if (q) {
         const s = q.toLowerCase();
-        arr = arr.filter(i => !isFace
-          ? (i.id.toLowerCase().includes(s) || (i.kw || '').toLowerCase().includes(s) || (i.cat || '').includes(q))
-          : (i.id.toLowerCase().includes(s) || (state.faces.meta?.lengths?.[i.len] || '').includes(q)));
+        arr = arr.filter(i => isPose
+          ? (i.id.toLowerCase().includes(s) || (i.name || '').toLowerCase().includes(s) || (i.cls || '').toLowerCase().includes(s) || (i.code || '').toLowerCase().includes(s))
+          : !isFace
+            ? (i.id.toLowerCase().includes(s) || (i.kw || '').toLowerCase().includes(s) || (i.cat || '').includes(q))
+            : (i.id.toLowerCase().includes(s) || (state.faces.meta?.lengths?.[i.len] || '').includes(q)));
       }
       return arr;
     };
@@ -859,7 +955,7 @@ window.REF = (function () {
       return `<div class="ref-grid ${isFace ? 'tall' : ''}" id="pk-grid">
         ${arr.map((it, i) => `<div class="ref-card ${state.stage[stageOf(kind)]?.id === it.id ? 'picked' : ''}" data-pk="${i}">
           <img src="${esc(it.thumb)}" loading="lazy" alt="">
-          <div class="ref-hover"><div class="ref-kw">${esc(isFace ? (state.faces.meta?.lengths?.[it.len] || '') : (it.kw || ''))}</div></div>
+          <div class="ref-hover"><div class="ref-kw">${esc(isPose ? (it.name || '') + ' · ' + (it.angle || '') : isFace ? (state.faces.meta?.lengths?.[it.len] || '') : (it.kw || ''))}</div></div>
         </div>`).join('')}
       </div>
       <div class="ref-more">${arr.length < listOf().length ? `已显示 ${arr.length} / ${listOf().length}，往下滚加载更多` : `共 ${arr.length} 张`}</div>`;
@@ -867,7 +963,7 @@ window.REF = (function () {
 
     V.openModal({
       title,
-      sub: isFace ? '选一张脸做人物参考' : '选一套服装',
+      sub: isFace ? '选一张脸做人物参考' : isPose ? '选一个姿势做姿态参考' : '选一套服装',
       wide: true,
       body: `<div class="gallery-toolbar" style="margin-bottom:12px">
           <div class="search-box">${V.icon('search', 15)}<input id="pk-q" type="text" placeholder="搜索关键词"></div>
@@ -892,7 +988,7 @@ window.REF = (function () {
               setStage(kind, item);
               closeFn();
               V.render();
-              V.toast(`已选${isFace ? '脸' : '服装'}：${isFace ? item.id.slice(0, 8) : item.id}`, 'ok');
+              V.toast(`已选${isFace ? '脸' : isPose ? '姿势' : '服装'}：${isFace ? item.id.slice(0, 8) : isPose ? item.name : item.id}`, 'ok');
             };
           });
         };
@@ -917,6 +1013,7 @@ window.REF = (function () {
     if (!h) return;
     state.stage.face = h.face ? (state.faces.items.find(i => i.id === h.face.id) || h.face) : null;
     state.stage.outfit = h.outfit ? (state.outfits.items.find(i => i.id === h.outfit.id) || h.outfit) : null;
+    state.stage.pose = h.pose ? (state.poses.items.find(i => i.id === h.pose.id) || h.pose) : null;
     restoreText = h.text;
     V.renderNav();
     V.render();
@@ -960,12 +1057,13 @@ window.REF = (function () {
     const item = currentItem();
     if (!item) return;
     const isOutfit = state.lb.kind === 'outfits';
+    const isPose = state.lb.kind === 'poses';
 
     if (a === 'ref-close') return close();
     if (a === 'ref-prev') return step(-1);
     if (a === 'ref-next') return step(1);
     if (a === 'ref-copy-kw') {
-      const t = isOutfit ? item.kw : (item.style || item.id);
+      const t = isOutfit ? item.kw : isPose ? item.name : (item.style || item.id);
       await U.copy(t || '');
       return V.toast('已复制', 'ok');
     }
@@ -991,7 +1089,7 @@ window.REF = (function () {
         V.toast('已从组合台移除');
       } else {
         state.stage[role] = item;
-        V.toast(`已加入组合台：${isOutfit ? '服装' : '脸'}`, 'ok');
+        V.toast(`已加入组合台：${isPose ? '姿势' : isOutfit ? '服装' : '脸'}`, 'ok');
       }
       V.renderNav();
       renderLightbox();
@@ -1000,9 +1098,12 @@ window.REF = (function () {
   });
 
   V.on('ref-open-source', (el) => {
-    window.open(el.dataset.kind === 'outfits'
+    const url = el.dataset.kind === 'outfits'
       ? 'https://github.com/Atom-kkk/AI-Clothing-Resource-Library'
-      : 'https://github.com/Atom-kkk/AI-Face-Resource-Library', '_blank');
+      : el.dataset.kind === 'poses'
+        ? 'https://github.com/Atom-kkk/AI-Pose-Resource-Library'
+        : 'https://github.com/Atom-kkk/AI-Face-Resource-Library';
+    window.open(url, '_blank');
   });
 
   V.on('ref-to-composer', () => V.go('composer'));
@@ -1018,6 +1119,11 @@ window.REF = (function () {
   register('faces', '人脸参考库', () => {
     const n = state.faces.items.length;
     return `${n || 1499} 张人脸 / 造型参考图 · 用于统一角色长相`;
+  });
+
+  register('poses', '姿势参考库', () => {
+    const n = state.poses.items.length;
+    return `${n || 1439} 张人体姿势参考图 · 按体系 / 动作分类 / 视角筛选 · 用于固定姿态`;
   });
 
   return {

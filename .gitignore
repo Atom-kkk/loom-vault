@@ -8,6 +8,7 @@ __pycache__/
 # 克隆后跑 `python3 scripts/fetch_reference.py` 即可拉回来
 reference/outfits/
 reference/faces/
+reference/poses/
 reference/_failed.txt
 
 # 本地引擎状态（含路径/pid，属本机，不入库）
