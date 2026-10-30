@@ -123,13 +123,27 @@ class Engine:
 
     @staticmethod
     def _write_yaml(comfy_dir, mapping):
+        """把外部模型目录写进 ComfyUI 的 extra_model_paths.yaml。
+
+        ComfyUI 的标准写法：每个条目一个 base_path + 各子目录名。
+        例如 mapping = {"checkpoints": "/Users/x/ComfyUI-Shared/models/checkpoints", ...}
+        → 每个 key 的值就是该类型模型的绝对目录，直接作为 base_path 的对应子项。
+        """
         target = os.path.join(comfy_dir, "extra_model_paths.yaml")
-        lines = ["# 由 Loom 画布「高级选项」自动生成", "loom_paths:", "    base_path: ."]
-        for key, path in (mapping or {}).items():
-            if not path:
-                continue
-            # 绝对路径原样写入；相对路径当作相对于 base_path
-            lines.append(f"    {key}: {path}")
+        lines = ["# 由 Loom 画布「高级选项」自动生成", "loom_shared:"]
+        # 推导 base_path：取所有路径的公共父目录（通常是 .../models），
+        # 再把各 key 映射成相对该 base_path 的子目录名。
+        entries = [(k, v) for k, v in (mapping or {}).items() if v]
+        if not entries:
+            # 空映射：写一个占位，避免 ComfyUI 读到损坏的 yaml
+            lines += ["    base_path: .", "    checkpoints: checkpoints"]
+        else:
+            # 简单方案：每个 key 直接作为一个独立 base_path 的别名，key 名即目录名
+            # 这样不管用户路径多杂，都能各自指对
+            for i, (key, path) in enumerate(entries):
+                lines.append(f"  loom_{i}:")
+                lines.append(f"    base_path: {os.path.dirname(os.path.abspath(path))}")
+                lines.append(f"    {key}: {os.path.basename(os.path.abspath(path))}")
         try:
             with open(target, "w", encoding="utf-8") as f:
                 f.write("\n".join(lines) + "\n")
@@ -168,6 +182,28 @@ class Engine:
                 return p
         return None
 
+    def _find_python(self, comfy_dir):
+        """找到启动 ComfyUI 应该用的 Python。
+
+        官方桌面版把引擎装成 comfy_dir/../standalone-env（自带 torch/yaml 等依赖），
+        必须用它自带的 Python，不能用 serve.py 自己的 sys.executable（缺依赖）。
+        """
+        # 1) 同级 standalone-env（桌面版/独立版的典型布局：installPath/ComfyUI + installPath/standalone-env）
+        parent = os.path.dirname(comfy_dir)
+        candidates = [
+            os.path.join(parent, "standalone-env", "bin", "python3"),
+            os.path.join(parent, "standalone-env", "bin", "python"),
+            os.path.join(parent, "venv", "bin", "python3"),
+            os.path.join(parent, "venv", "bin", "python"),
+            os.path.join(comfy_dir, "venv", "bin", "python3"),
+            os.path.join(comfy_dir, ".venv", "bin", "python3"),
+        ]
+        for c in candidates:
+            if os.path.isfile(c) and os.access(c, os.X_OK):
+                return c
+        # 2) 兜底：用当前 Python（可能缺依赖，但至少能跑起来报错给用户看）
+        return sys.executable
+
     def start(self, wait=True, timeout=90):
         """拉起 ComfyUI。返回 (ok, message)。"""
         cfg = self.cfg()
@@ -185,10 +221,12 @@ class Engine:
         if not main:
             return False, "ComfyUI 目录里没找到 main.py"
 
+        py = self._find_python(comfy_dir)
+
         log_path = os.path.join(ROOT, ".engine.log")
         logf = open(log_path, "a", encoding="utf-8", errors="replace")
         cmd = [
-            sys.executable, main,
+            py, main,
             "--listen", "127.0.0.1",
             "--port", str(port),
         ] + list(cfg.get("extra_args") or [])
@@ -214,7 +252,12 @@ class Engine:
             if self._probe_ready(port):
                 return True, "已启动（pid %d）" % proc.pid
             if proc.poll() is not None:
-                return False, "进程提前退出（code %s），见 .engine.log" % proc.returncode
+                # 进程提前退出：把日志里最后一行真实原因带出来，别只说「连接被拒」
+                tail = self._log_tail(3).strip().splitlines()
+                reason = tail[-1] if tail else ""
+                if len(reason) > 160:
+                    reason = reason[:160]
+                return False, ("引擎启动失败（exit %s）%s" % (proc.returncode, ("：%s" % reason) if reason else "，见 .engine.log"))
             time.sleep(1.5)
         return False, "启动超时（%ds），见 .engine.log" % timeout
 

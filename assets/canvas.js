@@ -1664,11 +1664,12 @@ window.Canvas = (function () {
     try { dirs = (await Comfy.listDir('~')).entries?.filter(e => e.dir)?.map(e => e.path) || []; } catch { }
 
     const PATH_FIELDS = [
-      { key: 'checkpoints', label: '底模（checkpoint）', hint: '.safetensors / .ckpt 完整模型' },
-      { key: 'unet', label: 'UNET / 扩散模型', hint: 'Flux、Krea 等分离式模型' },
-      { key: 'clip', label: 'CLIP / 文本编码器', hint: '同上分离式模型' },
+      { key: 'checkpoints', label: '底模（checkpoints）', hint: '.safetensors / .ckpt 完整模型' },
+      { key: 'diffusion_models', label: '扩散模型（diffusion_models）', hint: 'Flux、Krea、Qwen 等分离式 UNET' },
+      { key: 'clip', label: 'CLIP（clip）', hint: '文本编码器' },
+      { key: 'text_encoders', label: '文本编码器（text_encoders）', hint: 'Flux 等新模型的 T5/CLIP' },
       { key: 'vae', label: 'VAE', hint: '.safetensors' },
-      { key: 'loras', label: 'LoRA 目录', hint: 'LoRA 文件所在目录（可多个，工作流里指定）' },
+      { key: 'loras', label: 'LoRA（loras）', hint: 'LoRA 文件所在目录' },
     ];
 
     const paths = st.paths || {};
