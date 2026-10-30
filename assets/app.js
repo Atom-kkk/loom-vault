@@ -65,7 +65,9 @@ window.Vault = (function () {
       link: '<path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/>',
       back: '<path d="M11 5l-7 7 7 7"/><path d="M4 12h16"/>',
       user: '<circle cx="12" cy="8.2" r="3.7"/><path d="M4.6 20.2a7.4 7.4 0 0 1 14.8 0"/>',
-      shirt: '<path d="M9 3l3 2 3-2 5 2.6-1.8 4.2-2.2-.9V21H8V8.9l-2.2.9L4 5.6z"/>'
+      shirt: '<path d="M9 3l3 2 3-2 5 2.6-1.8 4.2-2.2-.9V21H8V8.9l-2.2.9L4 5.6z"/>',
+      undo: '<path d="M4 9h9.5a4.5 4.5 0 0 1 0 9H9"/><path d="M7.5 5.5L4 9l3.5 3.5"/>',
+      redo: '<path d="M20 9h-9.5a4.5 4.5 0 0 0 0 9H15"/><path d="M16.5 5.5L20 9l-3.5 3.5"/>'
     };
     return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${p[name] || ''}</svg>`;
   }
@@ -439,6 +441,7 @@ window.Vault = (function () {
           <span class="badge">${U.esc(cat?.name || '未分类')}</span>
           <div class="spacer"></div>
           <button class="icon-btn ${img.favorite ? 'on' : ''}" data-act="fav" data-id="${U.esc(img.id)}" title="收藏">${icon('star', 15)}</button>
+          <button class="icon-btn" data-act="lb-canvas" data-id="${U.esc(img.id)}" title="送去画布">${icon('flow', 15)}</button>
           <button class="icon-btn" data-act="lb-download" data-id="${U.esc(img.id)}" title="下载原图">${icon('down', 15)}</button>
           <button class="icon-btn" data-act="lb-edit" data-id="${U.esc(img.id)}" title="编辑信息">${icon('edit', 15)}</button>
           <button class="icon-btn" data-act="lb-delete" data-id="${U.esc(img.id)}" title="删除">${icon('trash', 15)}</button>
@@ -1100,6 +1103,53 @@ window.Vault = (function () {
   on('lb-close', closeLightbox);
   on('lb-prev', () => stepLightbox(-1));
   on('lb-next', () => stepLightbox(1));
+
+  on('lb-canvas', (el) => {
+    const img = state.images.find(i => i.id === el.dataset.id);
+    if (!img) return;
+
+    const opt = (mode, ic, title, desc) => `
+      <div class="entity" data-mode="${mode}" style="cursor:pointer">
+        <div class="entity-mark">${icon(ic, 16)}</div>
+        <div class="entity-main">
+          <b>${title}</b>
+          <em>${desc}</em>
+        </div>
+        <button class="btn sm">选择</button>
+      </div>`;
+
+    openModal({
+      title: '送去画布',
+      sub: `${img.id} · 送到当前画布`,
+      wide: true,
+      body: `<div class="entity-list">
+        ${opt('ref', 'img', '作为参考图',
+          '放进参考图节点，连到生成节点就是图生图；一张脸或一套衣服都能这么用')}
+        ${opt('image', 'layers', '作为图片节点',
+          '只放到画布上做对比、拼图，不参与生成')}
+        ${opt('rerun', 'spark', '用这套参数复现',
+          '自动搭好提示词（含负面）、参考图、工作流和生成节点，一键再跑一次')}
+      </div>
+      <p class="hint" style="margin:14px 0 0;line-height:1.85">
+        「复现」会把这张图当时的提示词版本、参考图编号、工作流一起铺到画布上；
+        如果原图没有关联工作流，生成节点需要你手动绑定一个。
+      </p>`,
+      footer: `<button class="btn" data-close>取消</button>`,
+      onMount: (box, close) => {
+        box.querySelectorAll('[data-mode]').forEach(row => {
+          row.onclick = async () => {
+            const mode = row.dataset.mode;
+            close();
+            try {
+              await Canvas.sendImage(img, mode);
+            } catch (e) {
+              toast('送入画布失败：' + e.message, 'err');
+            }
+          };
+        });
+      }
+    });
+  });
 
   on('lb-download', async (el) => {
     const img = state.images.find(i => i.id === el.dataset.id);

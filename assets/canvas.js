@@ -20,6 +20,7 @@ window.Canvas = (function () {
   let drag = null;
   let link = null;        // {from, x, y}
   let spaceDown = false;
+  let globalsBound = false;
   let saveTimer = null;
 
   const MIN_K = 0.2, MAX_K = 2.4;
@@ -59,6 +60,205 @@ window.Canvas = (function () {
 
   const nodeById = id => cv.nodes.find(n => n.id === id);
 
+  /* ---------------- 撤销 / 重做 ---------------- */
+  const HIST_MAX = 60;
+  let undoStack = [], redoStack = [], histLock = false;
+
+  const snapshot = () => (cv ? JSON.stringify({ n: cv.nodes, e: cv.edges }) : '{}');
+
+  function pushHistory() {
+    if (histLock || !cv) return;
+    const s = snapshot();
+    if (undoStack[undoStack.length - 1] === s) return;   // 连续同状态不重复压栈
+    undoStack.push(s);
+    if (undoStack.length > HIST_MAX) undoStack.shift();
+    redoStack.length = 0;
+  }
+
+  function restoreSnapshot(raw) {
+    if (!cv || !raw) return;
+    let data;
+    try { data = JSON.parse(raw); } catch { return; }
+    histLock = true;
+    cv.nodes = data.n || [];
+    cv.edges = data.e || [];
+    selected.clear();
+    renderAll();
+    queueSave();
+    histLock = false;
+  }
+
+  function undo() {
+    if (!undoStack.length) return V.toast('没有可撤销的操作');
+    redoStack.push(snapshot());
+    restoreSnapshot(undoStack.pop());
+    V.toast('已撤销');
+  }
+
+  function redo() {
+    if (!redoStack.length) return V.toast('没有可重做的操作');
+    undoStack.push(snapshot());
+    restoreSnapshot(redoStack.pop());
+    V.toast('已重做');
+  }
+
+  /* ---------------- 图片地址（blob 地址重开即失效，需要重新解析） ---------------- */
+  const urlCache = new Map();
+
+  async function urlForBlob(blobId) {
+    if (!blobId) return '';
+    if (urlCache.has(blobId)) return urlCache.get(blobId);
+    const u = await V.blobURL(blobId);
+    if (u) urlCache.set(blobId, u);
+    return u || '';
+  }
+
+  /** 节点可能只记了图库编号，先补出 blobId */
+  function blobIdOf(n) {
+    if (n.data.blobId) return n.data.blobId;
+    const img = (V.state.images || []).find(i => i.id === n.data.imageId);
+    if (img?.blobId) { n.data.blobId = img.blobId; return img.blobId; }
+    return '';
+  }
+
+  /** 进画布时把失效的 blob 地址换掉，否则重开一张图都看不见 */
+  async function ensureUrls() {
+    let changed = false;
+    for (const n of (cv?.nodes || [])) {
+      if (n.type !== 'image' && n.type !== 'ref') continue;
+      const bid = blobIdOf(n);
+      if (!bid) continue;
+      const u = await urlForBlob(bid);
+      if (u && n.data.src !== u) { n.data.src = u; changed = true; }
+    }
+    if (changed) renderAll();
+  }
+
+  /* ---------------- 从图库送往画布 ---------------- */
+  async function ensureCanvas() {
+    await loadList();
+    if (!cv) cv = list[0] || newCanvas();
+    if (!list.find(x => x.id === cv.id)) list.unshift(cv);
+    return cv;
+  }
+
+  /** 参考图 id → 缩略图相对路径（服装编号形如 SPR-0001，人脸是 11 位 hash） */
+  function refThumbPath(id) {
+    if (!id) return '';
+    return /^[A-Z]{2,4}-\d+$/.test(id)
+      ? `reference/outfits/${id}.webp`
+      : `reference/faces/${id}.webp`;
+  }
+
+  function rightEdgeOf() {
+    return cv.nodes.reduce((m, n) => Math.max(m, n.x + (n.w || 240)), -Infinity);
+  }
+
+  /**
+   * 把图库里的一张图送进画布
+   * @param {object} img   图库记录
+   * @param {'ref'|'image'|'rerun'} mode
+   */
+  async function sendImage(img, mode = 'ref') {
+    if (!img) return;
+    await ensureCanvas();
+
+    if (mode === 'ref' || mode === 'image') {
+      const src = await urlForBlob(img.blobId);
+      if (!src) return V.toast('原图不在本地了', 'err');
+      const base = rightEdgeOf();
+      const n = {
+        id: U.uid('n'),
+        type: mode,
+        x: Number.isFinite(base) ? base + 90 : 60,
+        y: 60,
+        w: mode === 'ref' ? 200 : 240,
+        data: {
+          src, label: img.id,
+          imageId: img.id, refId: img.id, blobId: img.blobId
+        }
+      };
+      pushHistory();
+      cv.nodes.push(n);
+      await persist();
+      V.go('canvas');
+      setTimeout(() => { fitView(); }, 200);
+      V.toast(mode === 'ref' ? `${img.id} 已作为参考图加入画布` : `${img.id} 已加入画布`, 'ok');
+      return;
+    }
+
+    // ---- 用这套参数复现 ----
+    const pv = (img.prompts || []).find(v => v.id === img.activePromptId)
+      || (img.prompts || []).slice(-1)[0] || {};
+    const text = pv.text || img.promptNodeText || '';
+    const neg = pv.negative || '';
+
+    pushHistory();
+    const made = [];
+    const addN = (o) => { cv.nodes.push(o); made.push(o.id); return o; };
+
+    // 参考图列在左侧
+    const refs = (img.refIds || []).filter(Boolean);
+    refs.forEach((rid, i) => {
+      addN({
+        id: U.uid('n'), type: 'ref',
+        x: -300, y: i * 210, w: 200,
+        data: { src: refThumbPath(rid), label: rid, refId: rid }
+      });
+    });
+
+    const pn = addN({
+      id: U.uid('n'), type: 'prompt',
+      x: 0, y: 0, w: 320,
+      data: { text, role: '正向' }
+    });
+
+    let nn = null;
+    if (neg) {
+      nn = addN({
+        id: U.uid('n'), type: 'prompt',
+        x: 0, y: 250, w: 320,
+        data: { text: neg, role: '负向' }
+      });
+    }
+
+    const wf = (V.state.workflows || []).find(w => w.id === img.workflowId);
+    let slots = 0, model = img.modelName || '';
+    if (wf) {
+      try {
+        const j = JSON.parse(wf.content || '{}');
+        if (!j.nodes) {
+          const info = Comfy.analyzeApi(j);
+          slots = info.imageIds.length;
+          model = info.model || model;
+        }
+      } catch { }
+    }
+
+    const gn = addN({
+      id: U.uid('n'), type: 'gen',
+      x: 400, y: 40, w: 300,
+      data: {
+        workflowId: wf ? wf.id : '',
+        wfName: wf ? wf.name : '',
+        model, imageSlots: slots,
+        status: 'idle', statusText: ''
+      }
+    });
+
+    // 自动连线
+    cv.nodes.filter(n => n.type === 'ref' && made.includes(n.id))
+      .forEach(n => cv.edges.push({ id: U.uid('e'), from: n.id, to: gn.id }));
+    cv.edges.push({ id: U.uid('e'), from: pn.id, to: gn.id });
+    if (nn) cv.edges.push({ id: U.uid('e'), from: nn.id, to: gn.id });
+
+    if (!wf) V.toast('原图没有关联工作流，生成节点需要手动绑定一个', 'err');
+
+    await persist();
+    V.go('canvas');
+    setTimeout(() => { fitView(); }, 200);
+  }
+
   /* ============================================================
      视图注册
      ============================================================ */
@@ -78,6 +278,7 @@ window.Canvas = (function () {
       if (!list.find(x => x.id === cv.id)) list.unshift(cv);
       buildShell(c);
       renderAll();
+      await ensureUrls();
     }
   });
 
@@ -97,12 +298,15 @@ window.Canvas = (function () {
           <button class="cv-tool" data-cv="add-ref" title="参考图节点">${V.icon('img', 15)}<span>参考图</span></button>
           <button class="cv-tool" data-cv="add-gen" title="生成节点">${V.icon('spark', 15)}<span>生成</span></button>
           <div class="cv-hud-sep"></div>
+          <button class="cv-tool" data-cv="undo" title="撤销 (⌘Z)">${V.icon('undo', 15)}</button>
+          <button class="cv-tool" data-cv="redo" title="重做 (⇧⌘Z)">${V.icon('redo', 15)}</button>
+          <div class="cv-hud-sep"></div>
           <button class="cv-tool" data-cv="fit" title="适应窗口">${V.icon('search', 15)}</button>
           <button class="cv-tool" data-cv="reset" title="100%">${V.icon('back', 15)}</button>
           <span class="cv-zoom" id="cv-zoom">100%</span>
         </div>
         <div class="cv-hint" id="cv-hint">
-          拖动空白处平移 · 滚轮缩放 · 从节点右侧圆点拖到左侧圆点连线 · Delete 删除选中
+          拖动空白处平移 · 滚轮缩放 · 右侧圆点拖到左侧圆点连线 · Delete 删除 · ⌘Z 撤销
         </div>
       </div>`;
 
@@ -207,7 +411,7 @@ window.Canvas = (function () {
 
   function nodeTitle(n) {
     if (n.type === 'prompt') return (n.data.text || '').slice(0, 14) || '空提示词';
-    if (n.type === 'gen') return n.data.wfName || 'ComfyUI';
+    if (n.type === 'gen') return n.data.wfName || (n.data.workflowId ? '生成' : '未绑定工作流');
     if (n.type === 'wf') return n.data.title || n.data.cls || '节点';
     return n.data.label || (n.type === 'ref' ? '参考图' : '图片');
   }
@@ -277,6 +481,7 @@ window.Canvas = (function () {
         if (t) t.textContent = nodeTitle(n);
         queueSave();
       });
+      ta.addEventListener('focus', () => pushHistory());     // 编辑前留快照
       ta.addEventListener('pointerdown', e => e.stopPropagation());
       ta.addEventListener('wheel', e => e.stopPropagation());
     }
@@ -284,6 +489,7 @@ window.Canvas = (function () {
     el.querySelectorAll('[data-role]').forEach(b => {
       b.addEventListener('click', e => {
         e.stopPropagation();
+        pushHistory();
         n.data.role = b.dataset.role;
         el.querySelectorAll('[data-role]').forEach(x => x.classList.toggle('on', x === b));
         queueSave();
@@ -356,11 +562,14 @@ window.Canvas = (function () {
       queueSave();
     }, { passive: false });
 
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-
-    document.addEventListener('keydown', onKey);
-    document.addEventListener('keyup', e => { if (e.code === 'Space') spaceDown = false; });
+    // 全局监听只绑一次，否则每次进画布都会叠加一层（撤销会一次退好几步）
+    if (!globalsBound) {
+      globalsBound = true;
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      document.addEventListener('keydown', onKey);
+      document.addEventListener('keyup', e => { if (e.code === 'Space') spaceDown = false; });
+    }
   }
 
   function applyTransform() {
@@ -383,7 +592,8 @@ window.Canvas = (function () {
       sx: e.clientX, sy: e.clientY,
       ox: kind === 'node' ? n.x : cv.view.x,
       oy: kind === 'node' ? n.y : cv.view.y,
-      moved: false
+      moved: false,
+      hist: false
     };
   }
 
@@ -410,6 +620,7 @@ window.Canvas = (function () {
     }
     if (drag.kind === 'node') {
       const n = drag.node;
+      if (!drag.hist) { pushHistory(); drag.hist = true; }   // 拖动前留一份快照
       n.x = Math.round(drag.ox + dx);
       n.y = Math.round(drag.oy + dy);
       const el = world.querySelector(`.cv-node[data-id="${n.id}"]`);
@@ -444,6 +655,19 @@ window.Canvas = (function () {
         [...selected].forEach(id => removeNode(id));
       }
     }
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && (e.key === 'z' || e.key === 'Z')) {
+      e.preventDefault();
+      e.shiftKey ? redo() : undo();
+      return;
+    }
+    if (mod && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); redo(); return; }
+    if (mod && e.key === 'a') {
+      e.preventDefault();
+      selected = new Set(cv.nodes.map(n => n.id));
+      world.querySelectorAll('.cv-node').forEach(el => el.classList.add('sel'));
+      return;
+    }
     if (e.key === 'Escape') { selected.clear(); renderAll(); }
   }
 
@@ -452,12 +676,14 @@ window.Canvas = (function () {
      ============================================================ */
   function addEdge(from, to) {
     if (cv.edges.some(e => e.from === from && e.to === to)) return;
+    pushHistory();
     cv.edges.push({ id: U.uid('e'), from, to });
     renderEdges();
     queueSave();
   }
 
   function removeNode(id) {
+    pushHistory();
     cv.nodes = cv.nodes.filter(n => n.id !== id);
     cv.edges = cv.edges.filter(e => e.from !== id && e.to !== id);
     selected.delete(id);
@@ -488,6 +714,7 @@ window.Canvas = (function () {
       wf: { w: 220, data: {} }
     }[type];
     const n = { ...base, ...defaults, ...extra, data: { ...defaults.data, ...(extra.data || {}) } };
+    pushHistory();
     cv.nodes.push(n);
     renderAll();
     queueSave();
@@ -528,7 +755,11 @@ window.Canvas = (function () {
                 const f = inp.files[0];
                 if (!f) return;
                 const blob = await Parse.makeThumb(f, 1200, 0.9);
-                n.data.src = URL.createObjectURL(blob);
+                const bid = U.uid('bl');
+                await DB.putBlob(bid, blob, { kind: 'canvas' });
+                pushHistory();
+                n.data.blobId = bid;
+                n.data.src = await urlForBlob(bid);
                 n.data.label = f.name;
                 close(); renderAll(); queueSave();
               };
@@ -551,6 +782,7 @@ window.Canvas = (function () {
               el.onclick = async () => {
                 const img = V.state.images.find(i => i.id === el.dataset.pickv);
                 const u = await V.blobURL(img.blobId);
+                pushHistory();
                 n.data.src = u;
                 n.data.blobId = img.blobId;
                 n.data.label = img.id;
@@ -567,6 +799,7 @@ window.Canvas = (function () {
           body.querySelectorAll('[data-pickr]').forEach(el => {
             el.onclick = () => {
               const it = src[Number(el.dataset.pickr)];
+              pushHistory();
               n.data.src = it.thumb;
               n.data.refId = it.id;
               n.data.label = it.id.slice(0, 10);
@@ -825,6 +1058,7 @@ window.Canvas = (function () {
       onMount: (box, close) => {
         box.querySelectorAll('[data-bindwf]').forEach(b => b.onclick = () => {
           const w = wfs.find(x => x.id === b.dataset.bindwf);
+          pushHistory();
           n.data.workflowId = w.id;
           n.data.wfName = w.name;
           try {
@@ -1046,7 +1280,7 @@ window.Canvas = (function () {
      视图控制
      ============================================================ */
   function fitView() {
-    if (!cv.nodes.length) return;
+    if (!cv || !world || !host || !cv.nodes.length) return;
     const els = [...world.querySelectorAll('.cv-node')];
     if (!els.length) return;
     let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
@@ -1143,12 +1377,17 @@ window.Canvas = (function () {
       cv.view = { x: 80, y: 60, k: 1 };
       applyTransform();
     }
+    if (a === 'undo') undo();
+    if (a === 'redo') redo();
     if (a === 'import-wf') importWorkflow();
     if (a === 'list') canvasListModal();
   });
 
   return {
     get current() { return cv; },
-    newCanvas, importWorkflow, buildFromWorkflow, fitView
+    newCanvas, importWorkflow, buildFromWorkflow, fitView,
+    undo, redo, sendImage,
+    canUndo: () => undoStack.length > 0,
+    canRedo: () => redoStack.length > 0
   };
 })();
