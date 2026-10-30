@@ -205,72 +205,45 @@ window.Canvas = (function () {
       return;
     }
 
-    // ---- 用这套参数复现 ----
+    // ---- 用这套参数复现：生成一个简易节点（画布里只出现简易节点） ----
     const pv = (img.prompts || []).find(v => v.id === img.activePromptId)
       || (img.prompts || []).slice(-1)[0] || {};
     const text = pv.text || img.promptNodeText || '';
     const neg = pv.negative || '';
 
-    pushHistory();
-    const made = [];
-    const addN = (o) => { cv.nodes.push(o); made.push(o.id); return o; };
-
-    // 参考图列在左侧
-    const refs = (img.refIds || []).filter(Boolean);
-    refs.forEach((rid, i) => {
-      addN({
-        id: U.uid('n'), type: 'ref',
-        x: -300, y: i * 210, w: 200,
-        data: { src: refThumbPath(rid), label: rid, refId: rid }
-      });
-    });
-
-    const pn = addN({
-      id: U.uid('n'), type: 'prompt',
-      x: 0, y: 0, w: 320,
-      data: { text, role: '正向' }
-    });
-
-    let nn = null;
-    if (neg) {
-      nn = addN({
-        id: U.uid('n'), type: 'prompt',
-        x: 0, y: 250, w: 320,
-        data: { text: neg, role: '负向' }
-      });
-    }
-
     const wf = (V.state.workflows || []).find(w => w.id === img.workflowId);
-    let slots = 0, model = img.modelName || '';
+    let slots = 0;
     if (wf) {
       try {
         const j = JSON.parse(wf.content || '{}');
-        if (!j.nodes) {
-          const info = Comfy.analyzeApi(j);
-          slots = info.imageIds.length;
-          model = info.model || model;
-        }
+        if (!j.nodes) slots = Comfy.analyzeApi(j).imageIds.length;
       } catch { }
     }
 
-    const gn = addN({
-      id: U.uid('n'), type: 'gen',
-      x: 400, y: 40, w: 300,
+    pushHistory();
+    const n = addNode('simple', {
+      pos: { x: 90, y: 100 },
       data: {
         workflowId: wf ? wf.id : '',
         wfName: wf ? wf.name : '',
-        model, imageSlots: slots,
+        text,
+        neg,
+        imageSlots: slots,
         status: 'idle', statusText: ''
       }
     });
 
-    // 自动连线
-    cv.nodes.filter(n => n.type === 'ref' && made.includes(n.id))
-      .forEach(n => cv.edges.push({ id: U.uid('e'), from: n.id, to: gn.id }));
-    cv.edges.push({ id: U.uid('e'), from: pn.id, to: gn.id });
-    if (nn) cv.edges.push({ id: U.uid('e'), from: nn.id, to: gn.id });
+    // 原图的参考图挂到简易节点上
+    const refs = (img.refIds || []).filter(Boolean);
+    refs.forEach((rid, i) => {
+      const rn = addNode('ref', {
+        pos: { x: 90, y: 360 + i * 210 },
+        data: { src: refThumbPath(rid), label: rid, refId: rid }
+      });
+      cv.edges.push({ id: U.uid('e'), from: rn.id, to: n.id });
+    });
 
-    if (!wf) V.toast('原图没有关联工作流，生成节点需要手动绑定一个', 'err');
+    if (!wf) V.toast('原图没有关联工作流，简易节点需要手动绑定一个', 'err');
 
     await persist();
     V.go('canvas');
@@ -287,11 +260,7 @@ window.Canvas = (function () {
     actions: () => `
       <button class="btn" data-cv="import-wf">${V.icon('flow', 14)} 导入工作流</button>
       <button class="btn" data-cv="pack">${V.icon('layers', 14)} 简易节点包</button>
-      ${cv && (cv.compact || cv.nodes.some(n => n.type === 'simple'))
-    ? `<button class="btn" data-cv="compact">${V.icon('flow', 14)} ${cv.compact ? '完整节点图' : '只看简易节点'}</button>`
-    : ''}
-      <button class="btn" data-cv="list">${V.icon('layers', 14)} 画布</button>
-      <button class="btn primary" data-cv="add-gen">${V.icon('plus', 14)} 生成节点</button>`,
+      <button class="btn" data-cv="list">${V.icon('layers', 14)} 画布</button>`,
     render: async (c) => {
       host = c;
       c.classList.add('cv-host');
@@ -319,10 +288,6 @@ window.Canvas = (function () {
         <div class="cv-hud">
           <button class="cv-tool cv-exit" data-cv="exit" title="退出画布（Esc）">${V.icon('back', 15)}<span>图库</span></button>
           <div class="cv-hud-sep"></div>
-          <button class="cv-tool" data-cv="add-prompt" title="提示词节点">${V.icon('edit', 15)}<span>提示词</span></button>
-          <button class="cv-tool" data-cv="add-ref" title="参考图节点">${V.icon('img', 15)}<span>参考图</span></button>
-          <button class="cv-tool" data-cv="add-gen" title="生成节点">${V.icon('spark', 15)}<span>生成</span></button>
-          <div class="cv-hud-sep"></div>
           <button class="cv-tool" data-cv="undo" title="撤销 (⌘Z)">${V.icon('undo', 15)}</button>
           <button class="cv-tool" data-cv="redo" title="重做 (⇧⌘Z)">${V.icon('redo', 15)}</button>
           <div class="cv-hud-sep"></div>
@@ -331,7 +296,7 @@ window.Canvas = (function () {
           <button class="cv-zoom" id="cv-zoom" data-cv="zoom100" title="回到 100%（点一下）">100%</button>
         </div>
         <div class="cv-hint" id="cv-hint">
-          拖动空白处平移 · 滚轮缩放 · 右侧圆点拖到左侧圆点连线 · Delete 删除 · ⌘Z 撤销 · Esc 退出画布
+          拖动空白处平移 · 滚轮缩放 · Delete 删除 · ⌘Z 撤销 · Esc 退出画布
         </div>
       </div>`;
 
@@ -345,23 +310,9 @@ window.Canvas = (function () {
   /* ============================================================
      渲染
      ============================================================ */
-  /** 简易模式：只显示简易节点和素材节点，工作流节点图与完整生成节点收起来 */
+  /** 画布只显示简易节点和素材节点；工作流节点图与完整生成节点永远不显示 */
   function visibleNode(n) {
-    if (!cv || !cv.compact) return true;
     return n.type !== 'wf' && n.type !== 'gen';
-  }
-
-  /** 顶栏的「完整节点图 / 只看简易节点」按钮（视图渲染后才可能不存在，需要时补一个） */
-  function syncCompactBtn() {
-    const bar = document.querySelector('#topbar-actions');
-    if (!bar || !cv) return;
-    const want = !!(cv.compact || cv.nodes.some(n => n.type === 'simple'));
-    const btn = bar.querySelector('[data-cv="compact"]');
-    if (!want) { btn?.remove(); return; }
-    const label = cv.compact ? '完整节点图' : '只看简易节点';
-    if (btn) btn.innerHTML = V.icon('flow', 14) + ' ' + label;
-    else bar.insertAdjacentHTML('beforeend',
-      `<button class="btn" data-cv="compact">${V.icon('flow', 14)} ${label}</button>`);
   }
 
   function renderAll() {
@@ -377,9 +328,7 @@ window.Canvas = (function () {
     const sub = document.querySelector('#view-sub');
     if (sub) {
       const vis = cv.nodes.filter(visibleNode).length;
-      sub.textContent = cv.compact
-        ? `${cv.name} · 简易模式（${vis} 个卡片 / 共 ${cv.nodes.length}）`
-        : `${cv.name} · ${cv.nodes.length} 个节点`;
+      sub.textContent = `${cv.name} · ${vis} 个简易节点`;
     }
   }
 
@@ -523,7 +472,7 @@ window.Canvas = (function () {
     const paths = cv.edges.map(e => {
       const a = nodeById(e.from), b = nodeById(e.to);
       if (!a || !b) return '';
-      if (cv.compact && (a.type === 'wf' || a.type === 'gen' || b.type === 'wf' || b.type === 'gen')) return '';
+      if (a.type === 'wf' || a.type === 'gen' || b.type === 'wf' || b.type === 'gen') return '';
       const aEl = world.querySelector(`.cv-node[data-id="${a.id}"]`);
       const bEl = world.querySelector(`.cv-node[data-id="${b.id}"]`);
       const aw = a.w || aEl?.offsetWidth || 240;
@@ -1288,20 +1237,17 @@ window.Canvas = (function () {
         const json = JSON.parse(text);
         const r = await buildFromWorkflow(json, name);
 
-        // 导入 = 打包成简易节点：能跑就只留一个简易节点，完整节点图收起来
+        // 导入 = 变成简易节点：能跑就只留一个简易节点
         if (r.bindWfId) {
-          cv.compact = true;
           addSimpleNode(r.bindWfId, { pos: { x: 90, y: 100 } });
           await packAdd(r.bindWfId, name);
-          syncCompactBtn();
           renderAll();
           await persist();
           await fitView();
-          V.toast(`已打包成简易节点：${name}（完整节点图收起来了，顶栏「完整节点图」可展开改参数）`, 'ok');
+          V.toast(`已变成简易节点：${name}`, 'ok');
         } else if (r.convertError) {
-          cv.compact = false;
           renderAll();
-          V.toast(`已铺出 ${r.count} 个节点，但转 API 失败：${r.convertError}`, 'err');
+          V.toast(`转 API 失败：${r.convertError}`, 'err');
         } else if (r.count) {
           V.toast(`已识别 ${r.count} 个节点`, 'ok');
         }
@@ -1644,7 +1590,6 @@ window.Canvas = (function () {
     n.w = 300;
     n.data.text = n.data.text || '';
     n.data.neg = n.data.neg || '';
-    syncCompactBtn();
     renderAll(); queueSave();
     V.toast('已变成简易节点：只留提示词和参考图', 'ok');
   }
@@ -1653,7 +1598,6 @@ window.Canvas = (function () {
     pushHistory();
     n.type = 'gen';
     n.w = 320;
-    syncCompactBtn();
     renderAll(); queueSave();
   }
 
@@ -1844,9 +1788,6 @@ window.Canvas = (function () {
     const t = e.target.closest('[data-cv]');
     if (!t) return;
     const a = t.dataset.cv;
-    if (a === 'add-prompt') addNode('prompt');
-    if (a === 'add-ref') addNode('ref');
-    if (a === 'add-gen') addNode('gen');
     if (a === 'fit') fitView();
     if (a === 'reset') {
       cv.view = { x: 80, y: 60, k: 1 };
@@ -1863,13 +1804,6 @@ window.Canvas = (function () {
     if (a === 'import-wf') importWorkflow();
     if (a === 'list') canvasListModal();
     if (a === 'pack') simplePackModal();
-    if (a === 'compact') {
-      cv.compact = !cv.compact;
-      syncCompactBtn();
-      renderAll();
-      queueSave();
-      V.toast(cv.compact ? '已收起节点图，只留简易节点' : '已展开完整节点图（可以在上面改参数、切旁路）', 'ok');
-    }
   });
 
   return {
