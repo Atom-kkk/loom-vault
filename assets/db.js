@@ -1,7 +1,7 @@
 /* ============================================================
    db.js — 本地数据层（IndexedDB）
-   8 张表：images / blobs / models / loras / workflows /
-           categories / settings / meta
+   数据表：images / blobs / models / loras / workflows /
+           categories / settings / meta / canvases / snippets
    ============================================================ */
 
 window.U = (function () {
@@ -93,8 +93,8 @@ window.U = (function () {
 
 window.DB = (function () {
   const NAME = 'aivault';
-  const VERSION = 2;
-  const STORES = ['images', 'blobs', 'models', 'loras', 'workflows', 'categories', 'settings', 'meta', 'canvases'];
+  const VERSION = 3;
+  const STORES = ['images', 'blobs', 'models', 'loras', 'workflows', 'categories', 'settings', 'meta', 'canvases', 'snippets'];
 
   let _db = null;
   let _mem = null;              // file:// 降级模式下的只读空库
@@ -136,6 +136,10 @@ window.DB = (function () {
         if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings', { keyPath: 'key' });
         if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'key' });
         if (!db.objectStoreNames.contains('canvases')) db.createObjectStore('canvases', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('snippets')) {
+          const s = db.createObjectStore('snippets', { keyPath: 'id' });
+          s.createIndex('group', 'group');
+        }
       };
 
       req.onsuccess = () => { _db = req.result; resolve(_db); };

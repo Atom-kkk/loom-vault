@@ -16,7 +16,7 @@ window.Vault = (function () {
     loras: [],
     workflows: [],
     settings: {},
-    filter: { q: '', categoryId: '', modelId: '', fav: false, sort: 'new' },
+    filter: { q: '', categoryId: '', modelId: '', workflowId: '', source: '', hasRef: false, open: false, fav: false, sort: 'new' },
     lb: { list: [], index: 0 },
     aiCfg: null,
     busy: false
@@ -67,6 +67,7 @@ window.Vault = (function () {
       user: '<circle cx="12" cy="8.2" r="3.7"/><path d="M4.6 20.2a7.4 7.4 0 0 1 14.8 0"/>',
       shirt: '<path d="M9 3l3 2 3-2 5 2.6-1.8 4.2-2.2-.9V21H8V8.9l-2.2.9L4 5.6z"/>',
       undo: '<path d="M4 9h9.5a4.5 4.5 0 0 1 0 9H9"/><path d="M7.5 5.5L4 9l3.5 3.5"/>',
+      list: '<path d="M4 6.5h16M4 12h16M4 17.5h10"/>',
       redo: '<path d="M20 9h-9.5a4.5 4.5 0 0 0 0 9H15"/><path d="M16.5 5.5L20 9l-3.5 3.5"/>'
     };
     return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${p[name] || ''}</svg>`;
@@ -202,6 +203,7 @@ window.Vault = (function () {
       ${item('outfits', '服饰参考', 'shirt', (window.REF && REF.counts().outfits) || '')}
       ${item('faces', '人脸参考', 'user', (window.REF && REF.counts().faces) || '')}
       ${item('composer', '提示词组合', 'spark', (window.REF && REF.stageCount()) || '')}
+      ${item('snippets', '提示词片段', 'list', (window.SNIP && SNIP.count()) || '')}
       <div class="nav-label">本地资产</div>
       ${item('models', '模型库', 'cpu', state.models.length || '')}
       ${item('loras', 'LoRA', 'layers', state.loras.length || '')}
@@ -256,6 +258,9 @@ window.Vault = (function () {
     if (state.view === 'favorites' || f.fav) arr = arr.filter(i => i.favorite);
     if (f.categoryId) arr = arr.filter(i => i.categoryId === f.categoryId);
     if (f.modelId) arr = arr.filter(i => i.modelId === f.modelId);
+    if (f.workflowId) arr = arr.filter(i => i.workflowId === f.workflowId);
+    if (f.source) arr = arr.filter(i => (i.source || 'import') === f.source);
+    if (f.hasRef) arr = arr.filter(i => (i.refIds || []).length > 0);
     if (f.q) {
       const q = f.q.toLowerCase();
       arr = arr.filter(i => {
@@ -307,6 +312,27 @@ window.Vault = (function () {
       </div>`;
   }
 
+  function filterActiveCount() {
+    const f = state.filter;
+    return [f.modelId, f.workflowId, f.source, f.hasRef].filter(Boolean).length;
+  }
+
+  function filterOptions() {
+    // 只列真正出现过的值，避免下拉里一堆空选项
+    const wf = new Map();
+    state.images.forEach(i => {
+      if (i.workflowId) wf.set(i.workflowId, i.workflowName || '未命名工作流');
+    });
+    state.workflows.forEach(w => { if (!wf.has(w.id)) wf.set(w.id, w.name); });
+
+    const src = new Map();
+    state.images.forEach(i => {
+      const k = i.source || 'import';
+      src.set(k, (src.get(k) || 0) + 1);
+    });
+    return { wf: [...wf.entries()], src: [...src.entries()] };
+  }
+
   function galleryToolbar() {
     const f = state.filter;
     const cats = state.categories.map(c => {
@@ -321,17 +347,38 @@ window.Vault = (function () {
         <button class="chip ${!f.categoryId ? 'active' : ''}" data-act="filter-cat" data-id="">全部 <span class="n">${state.images.length}</span></button>
         ${cats}
         <div class="spacer"></div>
-        <select id="g-model" style="width:auto;max-width:190px;height:32px;padding:0 28px 0 10px;font-size:12.5px">
-          <option value="">全部模型</option>
-          ${state.models.map(m => `<option value="${m.id}" ${f.modelId === m.id ? 'selected' : ''}>${U.esc(m.name)}</option>`).join('')}
-        </select>
+        <button class="chip filter-toggle ${filterActiveCount() || f.open ? 'active' : ''}" data-act="filter-toggle">
+          ${icon('layers', 13)} 筛选${filterActiveCount() ? `<span class="n">${filterActiveCount()}</span>` : ''}
+        </button>
         <select id="g-sort" style="width:auto;height:32px;padding:0 28px 0 10px;font-size:12.5px">
           <option value="new" ${f.sort === 'new' ? 'selected' : ''}>最新优先</option>
           <option value="old" ${f.sort === 'old' ? 'selected' : ''}>最早优先</option>
           <option value="name" ${f.sort === 'name' ? 'selected' : ''}>按编号</option>
           <option value="random" ${f.sort === 'random' ? 'selected' : ''}>随机</option>
         </select>
-      </div>`;
+      </div>
+      ${f.open ? filterRow() : ''}`;
+  }
+
+  function filterRow() {
+    const f = state.filter;
+    const { wf, src } = filterOptions();
+    return `<div class="gallery-filters">
+      <select id="g-model">
+        <option value="">全部模型</option>
+        ${state.models.map(m => `<option value="${m.id}" ${f.modelId === m.id ? 'selected' : ''}>${U.esc(m.name)}</option>`).join('')}
+      </select>
+      <select id="g-workflow">
+        <option value="">全部工作流</option>
+        ${wf.map(([id, name]) => `<option value="${U.esc(id)}" ${f.workflowId === id ? 'selected' : ''}>${U.esc(name)}</option>`).join('')}
+      </select>
+      <select id="g-source">
+        <option value="">全部来源</option>
+        ${src.map(([k, n]) => `<option value="${U.esc(k)}" ${f.source === k ? 'selected' : ''}>${U.esc(sourceLabel(k))} · ${n}</option>`).join('')}
+      </select>
+      <label class="chk-inline"><input type="checkbox" id="g-hasref" ${f.hasRef ? 'checked' : ''}> 只看有参考图</label>
+      ${filterActiveCount() ? `<button class="btn sm ghost" data-act="filter-clear">清除筛选</button>` : ''}
+    </div>`;
   }
 
   function bindGallery(container) {
@@ -344,6 +391,12 @@ window.Vault = (function () {
     if (so) so.onchange = () => { state.filter.sort = so.value; refreshGridOnly(container); };
     const mo = $('#g-model', container);
     if (mo) mo.onchange = () => { state.filter.modelId = mo.value; refreshGridOnly(container); };
+    const wo = $('#g-workflow', container);
+    if (wo) wo.onchange = () => { state.filter.workflowId = wo.value; refreshGridOnly(container); };
+    const so2 = $('#g-source', container);
+    if (so2) so2.onchange = () => { state.filter.source = so2.value; refreshGridOnly(container); };
+    const hr = $('#g-hasref', container);
+    if (hr) hr.onchange = () => { state.filter.hasRef = hr.checked; refreshGridOnly(container); };
   }
 
   function refreshGridOnly(container) {
@@ -1208,6 +1261,16 @@ window.Vault = (function () {
     await DB.saveImage(img);
     toast('已删除该版本', 'ok');
     await refreshAfterMutation(img.id);
+  });
+
+  on('filter-toggle', () => {
+    state.filter.open = !state.filter.open;
+    render();
+  });
+
+  on('filter-clear', () => {
+    Object.assign(state.filter, { modelId: '', workflowId: '', source: '', hasRef: false, categoryId: '' });
+    render();
   });
 
   on('filter-cat', (el) => {

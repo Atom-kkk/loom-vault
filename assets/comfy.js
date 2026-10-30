@@ -140,19 +140,165 @@ window.Comfy = (function () {
     return res.blob();
   }
 
+  /* ---------------- WebSocket 实时进度 ---------------- */
+  let ws = null;
+  let wsHook = null;
+  const MAX_WAIT = 6 * 60 * 1000;
+
+  function wsUrl() {
+    return base().replace(/^http/, 'ws') + '/ws?clientId=' + encodeURIComponent(clientId);
+  }
+
+  function closeWs() {
+    if (ws) { try { ws.close(); } catch { } ws = null; }
+  }
+
+  function onWsMessage(raw) {
+    if (typeof raw !== 'string') return;            // 二进制预览帧直接跳过
+    let m;
+    try { m = JSON.parse(raw); } catch { return; }
+    const d = m.data || {};
+    // 只认自己这条队列的消息；老版本 ComfyUI 不带 prompt_id 时就不筛
+    if (wsHook?.promptId && d.prompt_id && d.prompt_id !== wsHook.promptId) return;
+
+    switch (m.type) {
+      case 'execution_start':
+        wsHook?.onProgress?.({ phase: 'start' });
+        break;
+      case 'executing':
+        if (d.node == null) wsHook?.finish?.();
+        else wsHook?.onProgress?.({ phase: 'node', node: d.node });
+        break;
+      case 'progress':
+        wsHook?.onProgress?.({ phase: 'step', step: d.value, total: d.max, node: d.node });
+        break;
+      case 'execution_cached':
+        wsHook?.onProgress?.({ phase: 'cached' });
+        break;
+      case 'execution_success':
+        wsHook?.finish?.();
+        break;
+      case 'execution_error':
+        wsHook?.fail?.(Object.assign(
+          new Error('执行出错：' + (d.exception_message || d.node_type || '未知错误')),
+          { fatal: true }
+        ));
+        break;
+    }
+  }
+
+  function openWs(timeout = 4000) {
+    if (ws && ws.readyState === 1) return Promise.resolve(true);
+    closeWs();
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let sock;
+      try { sock = new WebSocket(wsUrl()); } catch (e) { return reject(e); }
+
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        try { sock.close(); } catch { }
+        reject(new Error('WebSocket 连接超时'));
+      }, timeout);
+
+      sock.onopen = () => {
+        if (settled) return;
+        settled = true; clearTimeout(timer);
+        ws = sock;
+        resolve(true);
+      };
+      sock.onmessage = ev => onWsMessage(ev.data);
+      sock.onerror = () => {
+        if (settled) return;
+        settled = true; clearTimeout(timer);
+        reject(new Error('WebSocket 连不上'));
+      };
+      sock.onclose = () => { if (ws === sock) ws = null; };
+    });
+  }
+
+  /* ---------------- 取图 ---------------- */
+  async function collectImages(images, onStatus) {
+    onStatus('取图中…');
+    const blobs = [];
+    for (const img of images) {
+      try { blobs.push({ meta: img, blob: await fetchImage(img) }); } catch { }
+    }
+    if (!blobs.length) throw new Error('图片下载失败');
+    return blobs;
+  }
+
+  /** WS 说完成了，history 可能还差一拍，再补问几次 */
+  async function waitEntry(promptId, ms = 8000) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      const e = await history(promptId);
+      if (e && (e.outputs && Object.keys(e.outputs).length)) return e;
+      if (e?.status?.completed) return e;
+      await new Promise(r => setTimeout(r, 300));
+    }
+    return await history(promptId);
+  }
+
   /**
    * 跑一次工作流
+   * 优先走 WebSocket 拿 step 级进度，连不上就退回轮询
    * @param {object} apiPrompt   API 格式（{nodeId:{class_type,inputs}}）
-   * @param {function} onStatus  状态回调 (text)
+   * @param {function} onStatus  (text, state, step, total)
+   * @param {function} onProgress ({phase, step, total, node, elapsed})
    */
-  async function run(apiPrompt, onStatus = () => { }) {
+  async function run(apiPrompt, onStatus = () => { }, onProgress = () => { }) {
     onStatus('提交中…');
     const promptId = await queue(apiPrompt);
     onStatus('已排队，等待执行…');
 
     const started = Date.now();
+    let viaWs = false;
+    try { viaWs = await openWs(4000); } catch { viaWs = false; }
+
+    if (viaWs) {
+      let finished = false;
+      let fatal = null;
+      try {
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => reject(Object.assign(new Error('等待超时'), { soft: true })), MAX_WAIT);
+          wsHook = {
+            promptId,
+            onProgress: x => {
+              if (x.phase === 'step') {
+                const elapsed = Math.round((Date.now() - started) / 1000);
+                onStatus(`生成中 ${x.step}/${x.total}`, 'running', x.step, x.total);
+                onProgress({ ...x, elapsed });
+              } else if (x.phase === 'start') {
+                onStatus('开始执行…');
+                onProgress(x);
+              } else if (x.phase === 'node') {
+                onProgress(x);
+              }
+            },
+            finish: () => { clearTimeout(timer); finished = true; resolve(); },
+            fail: e => { clearTimeout(timer); fatal = e; reject(e); }
+          };
+        });
+      } catch (e) {
+        if (fatal) { wsHook = null; throw fatal; }
+        // 超时或连接断了 —— 退回轮询
+      } finally {
+        wsHook = null;
+      }
+
+      if (finished) {
+        const entry = await waitEntry(promptId);
+        const images = extractImages(entry);
+        if (!images.length) throw new Error('执行结束但没有输出图片');
+        return { promptId, images: await collectImages(images, onStatus), viaWs: true };
+      }
+    }
+
+    // ---------------- 轮询兜底 ----------------
     let entry = null;
-    while (Date.now() - started < 6 * 60 * 1000) {
+    while (Date.now() - started < MAX_WAIT) {
       await new Promise(r => setTimeout(r, 900));
       entry = await history(promptId);
       if (entry) {
@@ -169,13 +315,7 @@ window.Comfy = (function () {
 
     const images = extractImages(entry);
     if (!images.length) throw new Error('执行结束但没有输出图片');
-    onStatus('取图中…');
-    const blobs = [];
-    for (const img of images) {
-      try { blobs.push({ meta: img, blob: await fetchImage(img) }); } catch { }
-    }
-    if (!blobs.length) throw new Error('图片下载失败');
-    return { promptId, images: blobs };
+    return { promptId, images: await collectImages(images, onStatus), viaWs: false };
   }
 
   /* ---------------- UI 格式 → API 格式 ---------------- */
@@ -399,6 +539,7 @@ window.Comfy = (function () {
     load, save, cfg: () => cfg, base,
     ping, objectInfo, objectInfoCached, queueInfo, uiToApi,
     uploadImage, queue, history, fetchImage, run,
+    openWs, closeWs, wsConnected: () => !!ws && ws.readyState === 1,
     analyzeApi, applyInputs, extractImages
   };
 })();

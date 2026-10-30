@@ -1,6 +1,8 @@
 # Loom 织造所
 
-> 本地 AI 出图工作台：图片仓库 · 模型资产 · 参考图库 · 提示词组合 · 无限画布
+> 本地 AI 出图工作台：图片仓库 · 模型资产 · 参考图库 · 提示词片段 · 无限画布
+>
+> 项目仓库 [github.com/Atom-kkk/loom-vault](https://github.com/Atom-kkk/loom-vault) · 作者 [@Atom-kkk](https://github.com/Atom-kkk)
 
 本地优先的 AI 出图工作台。把你自己用大模型生成的图集中存起来，连同**模型、LoRA、工作流、提示词、生成参数**一起管理。
 数据全部留在本机浏览器，不上传任何服务器；唯一的联网行为是你主动点「AI 再生成」时调用自己配置的接口。
@@ -43,7 +45,9 @@
 ### 图库
 
 - 统一的 3:4 网格，最新优先；支持编号 / 提示词 / 标签 / 备注全文搜索
-- 分类页签、模型下拉筛选、收藏、四种排序（最新 / 最早 / 编号 / 随机）
+- 分类页签、收藏、四种排序（最新 / 最早 / 编号 / 随机）
+- **筛选抽屉**：模型 / 工作流 / 来源 / 只看有参考图，可叠加，按钮上显示生效条数
+  　想回答「这套 LoRA 都出过什么」「用这个工作流跑过几批」这种问题，就是这里
 - 点击进入灯箱：大图 + 右侧信息面板，`← / →` 翻页，`Esc` 关闭，手机可横向滑动
 - 下载原图、编辑元数据（分类 / 模型 / 标签 / 备注 / 种子）、删除
 - 一键复制提示词或完整参数快照
@@ -140,6 +144,30 @@ shallow depth of field, photorealistic, fine skin detail, subtle film grain
 
 **组合会记进历史**：复制或 AI 润色时自动留档（最多 40 条），底部「最近组合」里点一下就能还原当时的脸、服装和提示词，不用重新挑。
 
+### 提示词片段库
+
+常用的光线、镜头、画质词不该每次手打。片段库把词组拆成一条条可以复用的碎片：
+
+- **分组**：光线 / 镜头 / 构图 / 画质 / 氛围 / 负面词，可自建
+- **点一下即复制**，并记录用过几次 —— 一眼看出哪条最常被翻出来
+- **插入**：组合台点「插入片段」，选中的词组自动补逗号接到光标处
+- **导入 Markdown**：直接把整理好的词表搬进来
+
+导入规则（`.md` / `.markdown` / `.txt`）：
+
+```markdown
+# 光线                       ← 一级标题当分组名
+- soft window light, diffused  ← 列表项当片段
+- golden hour backlight
+## 镜头                      ← 二级标题换分组
+- 85mm lens, f/1.4, shallow depth of field
+```
+
+- 列表项（`-` `*` `+` `1.`）、加粗、行内代码、链接都会清洗成纯文本
+- 代码块、引用、表格、分隔线自动跳过
+- 导入前去重（同分组同内容），导入前有预览，可以切换「只收列表项 / 连普通行也收」
+- 内置 14 条常用片段作起步，**只播种一次**，你删光了也不会再冒出来
+
 ### 无限画布（接 ComfyUI）
 
 一块自由摆放的布，把「提示词 → 生成 → 结果」连成一条线，直接跑本地 ComfyUI。
@@ -155,7 +183,9 @@ shallow depth of field, photorealistic, fine skin detail, subtle film grain
 
 1. 取上游节点的正向 / 负向文本，写进工作流的 `CLIPTextEncode`
 2. 参考图先 `POST /upload/image` 传进 ComfyUI，把返回的文件名填进 `LoadImage`
-3. `POST /prompt` 提交，轮询 `/history/{id}` 等执行完
+3. `POST /prompt` 提交，同时连上 ComfyUI 的 **WebSocket**，实时收 `progress` 事件
+   —— 生成节点上会显示 `12 / 30` 和一条进度条，不再只是「生成中… 8s」这种模糊计时
+   连不上 WS（跨域或版本不支持）会**自动退回轮询**，功能不受影响
 4. `GET /view` 把出图拉回来，在右侧自动生成一个图片节点，可以继续往下连
 
 **三种参考图用法都支持**：
@@ -242,6 +272,7 @@ shallow depth of field, photorealistic, fine skin detail, subtle film grain
 | `categories` | 分类：名称、前缀、颜色、序号 |
 | `settings` | 服务商 `aiProviders`、智能体 `aiAgents`、上次选用的智能体等 |
 | `canvases` | 画布：节点、连线、视口位置 |
+| `snippets` | 提示词片段：分组、内容、使用次数、来源 |
 | `meta` | 各分类的编号计数器 |
 
 注意三点：
@@ -276,6 +307,7 @@ ai-image-vault/
     ├── ai.js           # 多服务商 + 智能体：请求、九种提示词模式、模型拉取
     ├── app.js          # 应用外壳、图库、灯箱、上传、提示词版本链
     ├── reference.js    # 服饰 / 人脸参考库：分页网格、筛选、灯箱、组合台
+    ├── snippets.js     # 提示词片段库：分组、Markdown 导入、插入到组合台
     ├── comfy.js        # ComfyUI API 封装：提交、轮询、取图、上传、工作流分析
     ├── canvas.js       # 无限画布：平移缩放、节点、连线、撤销重做、工作流识别
     └── manage.js       # 模型库、LoRA、工作流、分类、设置
@@ -307,6 +339,14 @@ ai-image-vault/
 - **多设备同步**：数据层集中在 `db.js`，把这一层换成远程 API 就能变多人共享的素材库
 
 ---
+
+## 关于作者
+
+- GitHub：[@Atom-kkk](https://github.com/Atom-kkk)
+- 抖音：[个人主页](https://www.iesdouyin.com/share/user/MS4wLjABAAAAQc4NN1_Ms30-2s2a5hjyZ2CweDIDkX2eSwaure41sOyXx7ogYtv8fmsKsAgB9lZv)
+- 另外两个同系列素材库：[AI-Face-Resource-Library](https://github.com/Atom-kkk/AI-Face-Resource-Library) · [AI-Clothing-Resource-Library](https://github.com/Atom-kkk/AI-Clothing-Resource-Library)
+
+应用内也有入口：侧栏左下角的「抖音 / GitHub」，以及设置页最下面的「关于」。
 
 ## 素材来源
 

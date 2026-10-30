@@ -384,6 +384,9 @@ window.Canvas = (function () {
           <span>${esc(n.data.wfName || '未绑定工作流')}</span>
           <span>${esc(refTxt || n.data.model || '')}</span>
         </div>
+        ${st === 'running' && n.data.prog
+          ? `<div class="cv-prog"><i style="width:${Math.min(100, Math.max(2, Math.round(n.data.prog.step / Math.max(1, n.data.prog.total) * 100)))}%"></i></div>`
+          : ''}
         ${n.data.statusText ? `<div class="cv-gen-status ${st}">${esc(n.data.statusText)}</div>` : ''}
         <button class="cv-run" data-cvnode="run" ${st === 'running' ? 'disabled' : ''}>
           ${st === 'running' ? '<span class="spinner"></span> 生成中' : '生成'}
@@ -851,9 +854,11 @@ window.Canvas = (function () {
       return V.toast('工作流内容不是合法 JSON', 'err');
     }
 
-    const setStatus = (text, st = 'running') => {
+    const setStatus = (text, st = 'running', step, total) => {
       n.data.status = st;
       n.data.statusText = text;
+      if (step != null && total) n.data.prog = { step, total };
+      if (st !== 'running') n.data.prog = null;
       const el = world.querySelector(`.cv-node[data-id="${n.id}"]`);
       if (el) el.replaceWith(makeNodeEl(n));
       const fresh = world.querySelector(`.cv-node[data-id="${n.id}"]`);
@@ -883,7 +888,11 @@ window.Canvas = (function () {
         V.toast(`工作流只有 ${applied.slots} 个图位，多出的 ${applied.dropped} 张参考图没用上`, 'err');
       }
 
-      const res = await Comfy.run(applied.api, t => setStatus(t));
+      const res = await Comfy.run(
+        applied.api,
+        (t, st, step, total) => setStatus(t, st || 'running', step, total),
+        x => { if (x.phase === 'step') setStatus(`生成中 ${x.step}/${x.total}`, 'running', x.step, x.total); }
+      );
 
       // 提取工作流里的关键信息，随图一起入库
       const meta = Parse.parseComfy(api) || {};
@@ -920,7 +929,7 @@ window.Canvas = (function () {
         data: { src: url, label: savedIds[0] || '生成结果', imageId: savedIds[0] || '' }
       });
 
-      setStatus(`完成 · 已存 ${savedIds.length} 张`, 'done');
+      setStatus(`完成 · 已存 ${savedIds.length} 张${res.viaWs ? ' · WS' : ''}`, 'done');
       if (savedIds.length) {
         await V.reload();
         V.renderNav();

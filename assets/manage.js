@@ -844,10 +844,15 @@
           <div class="section">
             <div class="section-title">关于<span></span></div>
             <p class="hint" style="margin:0;line-height:1.9">
-              Loom 织造所 v2.0 · 零依赖单页应用，数据全部本地。<br>
+              Loom 织造所 v2.1 · 零依赖单页应用，数据全部本地。<br>
               PNG 内嵌参数（A1111 / ComfyUI / NovelAI）上传时自动解析；提示词采用版本链，AI 重写只追加新版本，不覆盖旧的。<br>
-              所有文件在 <code>ai-image-vault/</code> 目录下，备份直接拷走整个文件夹即可。
+              所有文件在 <code>loom-vault/</code> 目录下，备份直接拷走整个文件夹即可。
             </p>
+            <div class="about-links">
+              <a href="https://github.com/Atom-kkk/loom-vault" target="_blank" rel="noopener">项目仓库</a>
+              <a href="https://github.com/Atom-kkk" target="_blank" rel="noopener">GitHub 主页</a>
+              <a href="https://www.iesdouyin.com/share/user/MS4wLjABAAAAQc4NN1_Ms30-2s2a5hjyZ2CweDIDkX2eSwaure41sOyXx7ogYtv8fmsKsAgB9lZv" target="_blank" rel="noopener">抖音主页</a>
+            </div>
           </div>
         </div>`;
 

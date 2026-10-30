@@ -659,6 +659,7 @@ window.REF = (function () {
             <textarea id="comp-text" class="comp-text" spellcheck="false">${esc(text)}</textarea>
             <div class="comp-actions">
               <button class="btn" data-act="comp-remix">${V.icon('spark', 14)} AI 润色成片</button>
+              <button class="btn" data-act="comp-snippet">${V.icon('list', 14)} 插入片段</button>
               <button class="btn" data-act="comp-copy">${V.icon('copy', 14)} 复制</button>
               <div style="flex:1"></div>
               <span class="comp-agent">智能体：${esc(AI.agentById(AI.lastAgentId())?.name || '—')}</span>
@@ -677,6 +678,16 @@ window.REF = (function () {
     state.stage = { face: null, outfit: null };
     V.renderNav();
     V.render();
+  });
+
+  V.on('comp-snippet', () => {
+    if (!window.SNIP) return V.toast('片段库还没加载完', 'err');
+    SNIP.openPicker(s => {
+      const ta = document.querySelector('#comp-text');
+      if (!ta) return;
+      SNIP.appendTo(ta, s.text);
+      V.toast('已插入片段', 'ok');
+    });
   });
 
   V.on('comp-copy', async () => {
