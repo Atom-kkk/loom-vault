@@ -1527,3 +1527,66 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
 /* 画布 HUD 的退出按钮 */
 .cv-exit { font-weight: 600; }
 .cv-exit:hover { background: var(--rose-soft); color: var(--rose-ink); }
+
+/* ============================================================
+   侧栏收起
+   ============================================================ */
+#sidebar { position: relative; transition: width .2s var(--ease), flex-basis .2s var(--ease); }
+
+.side-toggle {
+  position: absolute;
+  top: 22px; right: -11px;
+  width: 22px; height: 22px;
+  border-radius: 99px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg);
+  color: var(--text-3);
+  display: grid; place-items: center;
+  cursor: pointer;
+  z-index: 6;
+  padding: 0;
+  transition: .15s var(--ease);
+}
+.side-toggle svg { width: 13px; height: 13px; }
+.side-toggle:hover {
+  border-color: var(--rose);
+  color: var(--rose-ink);
+  background: var(--rose-soft);
+}
+
+#app.side-mini #sidebar {
+  width: 62px;
+  flex: 0 0 62px;
+  padding: 16px 8px 12px;
+}
+#app.side-mini .brand { justify-content: center; padding: 4px 0 16px; }
+#app.side-mini .brand-text { display: none; }
+
+#app.side-mini .nav-item {
+  justify-content: center;
+  padding: 10px 0;
+  gap: 0;
+}
+#app.side-mini .nav-item .lbl,
+#app.side-mini .nav-item .count { display: none; }
+#app.side-mini .nav-item svg { width: 19px; height: 19px; }
+
+/* 分组标题收成一条细线，保留节奏感 */
+#app.side-mini .nav-label {
+  display: block;
+  height: 1px; padding: 0;
+  margin: 9px 8px;
+  font-size: 0; letter-spacing: 0;
+  background: var(--line);
+  border-radius: 1px;
+}
+#app.side-mini #nav > .nav-label:first-child { margin-top: 4px; }
+
+#app.side-mini .storage-line { display: none; }
+#app.side-mini .side-foot { padding-top: 8px; }
+#app.side-mini .side-links { flex-direction: column; padding: 0 2px 6px; }
+#app.side-mini .side-link { height: 30px; }
+#app.side-mini .side-link span { display: none; }
+#app.side-mini .side-link svg { width: 15px; height: 15px; }
+#app.side-mini .side-actions { flex-direction: column; gap: 4px; }
+#app.side-mini .ghost-btn { height: 32px; }

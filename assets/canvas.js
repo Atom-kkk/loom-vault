@@ -134,6 +134,24 @@ window.Canvas = (function () {
     if (changed) renderAll();
   }
 
+  /** 参考库节点按需换成高清原图；自己图库里的图本来就是原图，不重复下载 */
+  async function ensureHiRes(reset = false) {
+    if (!window.REF?.hiRes || !cv) return;
+    const target = cv;
+    for (const n of target.nodes) {
+      if (n.type !== 'ref' || !n.data.refId || n.data.blobId) continue;
+      if (reset) n.data.hiSrc = '';
+      const url = await REF.hiRes(n.data.refId);
+      if (!url || cv !== target || !cv.nodes.includes(n)) continue;
+      if (n.data.hiSrc !== url) {
+        n.data.hiSrc = url;
+        const img = world?.querySelector(`.cv-node[data-id="${n.id}"] .cv-img`);
+        if (img) img.src = url;
+        queueSave();
+      }
+    }
+  }
+
   /* ---------------- 从图库送往画布 ---------------- */
   async function ensureCanvas() {
     await loadList();
@@ -279,6 +297,7 @@ window.Canvas = (function () {
       buildShell(c);
       renderAll();
       await ensureUrls();
+      ensureHiRes(true);   // 后台换原图，不阻塞画布
     }
   });
 
@@ -364,8 +383,9 @@ window.Canvas = (function () {
         </div>
         <textarea class="cv-text" data-cvtext placeholder="写提示词…">${esc(n.data.text || '')}</textarea>`;
     } else if (n.type === 'image' || n.type === 'ref') {
-      body = n.data.src
-        ? `<img class="cv-img" src="${esc(n.data.src)}" alt="">`
+      const shownSrc = n.type === 'ref' ? (n.data.hiSrc || n.data.src) : n.data.src;
+      body = shownSrc
+        ? `<img class="cv-img" src="${esc(shownSrc)}" alt="">`
         : `<div class="cv-drop">${V.icon('img', 26)}<span>双击或点右上角上传图片</span></div>`;
     } else if (n.type === 'gen') {
       const st = n.data.status || 'idle';
@@ -812,6 +832,7 @@ window.Canvas = (function () {
               n.data.refId = it.id;
               n.data.label = it.id.slice(0, 10);
               close(); renderAll(); queueSave();
+              ensureHiRes();
             };
           });
         };
@@ -875,7 +896,7 @@ window.Canvas = (function () {
       // 上传参考图（多张按连线顺序）
       const names = [];
       for (let i = 0; i < refs.length; i++) {
-        const src = refs[i].data.src;
+        const src = refs[i].data.hiSrc || refs[i].data.src;
         if (!src) continue;
         setStatus(refs.length > 1 ? `上传参考图 ${i + 1}/${refs.length}…` : '上传参考图…');
         const blob = await fetch(src).then(r => r.blob()).catch(() => null);

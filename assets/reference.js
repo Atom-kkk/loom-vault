@@ -23,6 +23,93 @@ window.REF = (function () {
   const esc = U.esc;
   const isFile = () => location.protocol === 'file:';
 
+  /* ---------------- 高清原图（按需下载 + 本地缓存） ----------------
+     两个参考库仓库里只放缩略图，原图在各自站点：
+       · 服装  assets/img/<id>.webp   （约 90KB）
+       · 人脸  img/full/<id>.png      （1122×1402，约 1.9MB）
+     首次用到时下载并存进 blobs 表（kind=refcache），之后离线也能用。 */
+  const HI_CLOTH = [
+    'https://cdn.jsdelivr.net/gh/Atom-kkk/AI-Clothing-Resource-Library@main/assets/img/',
+    'https://gcore.jsdelivr.net/gh/Atom-kkk/AI-Clothing-Resource-Library@main/assets/img/',
+    'https://fastly.jsdelivr.net/gh/Atom-kkk/AI-Clothing-Resource-Library@main/assets/img/'
+  ];
+  const HI_FACE = 'https://ai-portrait-gallery.pages.dev/img/full/';
+  const HI_TIMEOUT = 12000;
+  const HI_MAX = 40;                 // 最多缓存多少张原图
+  const hiMem = new Map();
+
+  function hiUrlOf(id) {
+    return hiUrlsOf(id)[0] || '';
+  }
+
+  function hiUrlsOf(id) {
+    if (!id) return [];
+    return /^[A-Z]{2,4}-\d+$/.test(id)
+      ? HI_CLOTH.map(base => base + id + '.webp')
+      : [HI_FACE + id + '.png'];
+  }
+
+  async function cacheIndex() {
+    const st = await DB.getSettings().catch(() => ({}));
+    return Array.isArray(st.refCache) ? st.refCache : [];
+  }
+
+  async function touchCache(id) {
+    const idx = (await cacheIndex()).filter(x => x.id !== id);
+    idx.unshift({ id, at: Date.now() });
+    while (idx.length > HI_MAX) {
+      const drop = idx.pop();
+      await DB.delBlob('reffull_' + drop.id).catch(() => { });
+    }
+    await DB.setSetting('refCache', idx).catch(() => { });
+  }
+
+  async function hiRes(id) {
+    if (!id) return '';
+    if (hiMem.has(id)) return hiMem.get(id);
+
+    const key = 'reffull_' + id;
+    try {
+      const blob = await DB.getBlob(key);
+      if (blob) {
+        const u = URL.createObjectURL(blob);
+        hiMem.set(id, u);
+        return u;
+      }
+    } catch { }
+
+    if (isFile()) return '';          // file:// 下拿不到跨域图片
+    for (const url of hiUrlsOf(id)) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), HI_TIMEOUT);
+      try {
+        const res = await fetch(url, { mode: 'cors', signal: ctrl.signal });
+        if (!res.ok) continue;
+        const blob = await res.blob();
+        if (!blob.size) continue;
+        await DB.putBlob(key, blob, { kind: 'refcache' }).catch(() => { });
+        await touchCache(id);
+        const u = URL.createObjectURL(blob);
+        hiMem.set(id, u);
+        return u;
+      } catch {
+        // 超时、断网、CORS —— 换下一个 CDN，全部失败就保留缩略图
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    return '';
+  }
+
+  async function clearHiCache() {
+    const idx = await cacheIndex();
+    for (const x of idx) await DB.delBlob('reffull_' + x.id).catch(() => { });
+    await DB.setSetting('refCache', []).catch(() => { });
+    hiMem.forEach(u => { try { URL.revokeObjectURL(u); } catch { } });
+    hiMem.clear();
+    return idx.length;
+  }
+
   /* ---------------- 组合历史 ---------------- */
   const HIST_KEY = 'vault.compHistory';
   const HIST_MAX = 40;
@@ -382,11 +469,11 @@ window.REF = (function () {
         </div>
         <div class="lb-canvas">
           ${list.length > 1 ? `<button class="lb-nav prev" data-refact="ref-prev">${V.icon('left', 18)}</button>` : ''}
-          <img src="${esc(item.thumb)}" alt="${esc(item.id)}">
+          <img id="ref-big" src="${esc(item.thumb)}" alt="${esc(item.id)}" data-hi="${esc(item.id)}">
           ${list.length > 1 ? `<button class="lb-nav next" data-refact="ref-next">${V.icon('right', 18)}</button>` : ''}
         </div>
         <div class="lb-foot">
-          <span>${isOutfit ? '360×540 缩略图' : `${item.w || '?'}×${item.h || '?'} 原图`}</span>
+          <span id="ref-size">${isOutfit ? '360×540 缩略图' : `${item.w || '?'}×${item.h || '?'} 原图`}</span>
           <span>${index + 1} / ${list.length}</span>
         </div>
       </div>
@@ -441,6 +528,27 @@ window.REF = (function () {
           </div>
         </div>
       </aside>`;
+
+    // 先显示本地缩略图，原图到达后只替换当前这一张（避免翻页串图）
+    if (!isFile()) {
+      const requestedId = item.id;
+      const sizeEl = lb.querySelector('#ref-size');
+      const initialLabel = sizeEl?.textContent || '';
+      if (sizeEl) sizeEl.textContent = initialLabel + ' · 原图载入中';
+      hiRes(requestedId).then(url => {
+        if (state.lb.open && state.lb.kind === kind && currentItem()?.id !== requestedId) return;
+        const img = lb.querySelector('#ref-big');
+        if (!img || img.dataset.hi !== requestedId) return;
+        if (url) {
+          img.src = url;
+          if (sizeEl) sizeEl.textContent = isOutfit
+            ? '高清原图 · 已缓存到本地'
+            : `${item.w || '?'}×${item.h || '?'} 高清原图 · 已缓存到本地`;
+        } else if (sizeEl) {
+          sizeEl.textContent = initialLabel;
+        }
+      }).catch(() => { if (sizeEl) sizeEl.textContent = initialLabel; });
+    }
   }
 
   /* ============================================================
@@ -469,8 +577,10 @@ window.REF = (function () {
     if (existed) return V.toast('这张已经在你的图库里了', 'err');
 
     try {
-      const res = await fetch(item.thumb);
-      const blob = await res.blob();
+      // 已能取得原图就存原图；离线或下载失败才退回缩略图
+      await hiRes(item.id);
+      const hiBlob = await DB.getBlob('reffull_' + item.id).catch(() => null);
+      const blob = hiBlob || await fetch(item.thumb).then(r => r.blob());
       const thumb = await Parse.makeThumb(blob, 640, 0.85);
 
       const seq = await DB.nextSeq(cat.id);
@@ -912,6 +1022,7 @@ window.REF = (function () {
 
   return {
     preload, counts, stageCount, isOpen: () => state.lb.open, step, close,
-    composeText, stage: state.stage
+    composeText, stage: state.stage,
+    hiRes, hiUrlOf, clearHiCache
   };
 })();

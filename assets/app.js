@@ -190,7 +190,7 @@ window.Vault = (function () {
     const n = state.images.length;
     const fav = state.images.filter(i => i.favorite).length;
     const item = (v, label, ic, count, act) => `
-      <button class="nav-item ${state.view === v ? 'active' : ''}" ${act ? `data-act="${act}"` : `data-view="${v}"`}>
+      <button class="nav-item ${state.view === v ? 'active' : ''}" title="${label}" ${act ? `data-act="${act}"` : `data-view="${v}"`}>
         ${icon(ic)}<span class="lbl">${label}</span>${count ? `<span class="count">${count}</span>` : ''}
       </button>`;
     return `
@@ -1353,10 +1353,31 @@ window.Vault = (function () {
   /* ============================================================
      启动
      ============================================================ */
+  /* ---------------- 侧栏收起 ---------------- */
+  const SIDE_KEY = 'vault.sideMini';
+
+  function applySideMini(on, persist = true) {
+    const app = document.querySelector('#app');
+    if (!app) return;
+    app.classList.toggle('side-mini', !!on);
+    const btn = $('#side-toggle');
+    if (btn) {
+      btn.innerHTML = icon(on ? 'right' : 'left', 13);
+      btn.title = on ? '展开侧栏' : '收起侧栏';
+    }
+    if (persist) { try { localStorage.setItem(SIDE_KEY, on ? '1' : '0'); } catch { } }
+  }
+
   async function boot() {
     // 主题
     const saved = localStorage.getItem('vault.theme');
     if (saved) document.documentElement.dataset.theme = saved;
+
+    // 侧栏收起状态
+    applySideMini(localStorage.getItem(SIDE_KEY) === '1', false);
+    $('#side-toggle')?.addEventListener('click', () => {
+      applySideMini(!document.querySelector('#app').classList.contains('side-mini'));
+    });
 
     try {
       await DB.open();

@@ -829,6 +829,7 @@
             <div style="display:flex;gap:8px;flex-wrap:wrap">
               <button class="btn" data-act="set-export">${icon('down', 14)} 导出元数据 JSON</button>
               <button class="btn" data-act="set-import">${icon('upload', 14)} 导入 JSON</button>
+              <button class="btn" data-act="ref-cache-clear">清理高清原图缓存</button>
               <button class="btn danger" data-act="set-wipe">清空全部数据</button>
             </div>
             <div style="margin-top:14px;font-size:12px;color:var(--text-2)">
@@ -1198,6 +1199,12 @@
   /* ============================================================
      数据
      ============================================================ */
+  V.on('ref-cache-clear', async () => {
+    if (!window.REF?.clearHiCache) return;
+    const n = await REF.clearHiCache();
+    toast(n ? `已清理 ${n} 张高清原图缓存，缩略图仍保留` : '没有需要清理的高清缓存', 'ok');
+  });
+
   V.on('set-export', async () => {
     const payload = await DB.exportMeta();
     U.download(`织造所-元数据-${new Date().toISOString().slice(0, 10)}.json`,
