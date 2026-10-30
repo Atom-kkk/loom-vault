@@ -16,7 +16,10 @@ import socket
 import socketserver
 import sys
 import threading
+import urllib.error
+import urllib.request
 import webbrowser
+from urllib.parse import parse_qs, urlparse
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_PORT = 8787
@@ -39,6 +42,65 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         # 静默掉每张图的访问日志，只在出错时提示
         if args and str(args[1]) not in ("200", "304", "206"):
             sys.stderr.write("  %s\n" % (fmt % args))
+
+    # ---------------- /comfy?u=<url> 本地反代 ----------------
+    # ComfyUI 新版会拒绝陌生 Origin（403，无 CORS 头），浏览器 fetch 直连必挂；
+    # 由这个仅监听 127.0.0.1 的本地服务代为转发，绕开浏览器的跨域限制。
+    FORWARDED_HEADERS = ("Content-Type", "Accept", "Authorization")
+
+    def _send_proxy(self, status, data, ctype="application/json"):
+        self.send_response(status)
+        if ctype:
+            self.send_header("Content-Type", ctype)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _proxy(self):
+        qs = parse_qs(urlparse(self.path).query)
+        target = (qs.get("u") or [""])[0]
+        u = urlparse(target)
+        host = self.headers.get("Host", "")
+        if u.scheme not in ("http", "https") or not u.netloc:
+            return self._send_proxy(400, b'{"error":"bad target"}', "application/json")
+        if u.netloc == host or u.netloc.endswith(":" + str(self.server.server_address[1])):
+            return self._send_proxy(400, b'{"error":"loop not allowed"}', "application/json")
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length) if length else None
+        req = urllib.request.Request(target, data=body, method=self.command)
+        for h in self.FORWARDED_HEADERS:
+            if self.headers.get(h):
+                req.add_header(h, self.headers[h])
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r:
+                self._send_proxy(r.status, r.read(), r.headers.get("Content-Type"))
+        except urllib.error.HTTPError as e:
+            try:
+                data = e.read()
+            except Exception:
+                data = b""
+            self._send_proxy(e.code, data, e.headers.get("Content-Type") if e.headers else None)
+        except Exception as e:
+            self._send_proxy(502, ("proxy error: %s" % e).encode("utf-8"), "text/plain; charset=utf-8")
+
+    def _wants_proxy(self):
+        return self.path.split("?")[0] == "/comfy"
+
+    def do_GET(self):
+        if self._wants_proxy():
+            return self._proxy()
+        return super().do_GET()
+
+    def do_HEAD(self):
+        if self._wants_proxy():
+            return self._proxy()
+        return super().do_HEAD()
+
+    def do_POST(self):
+        if self._wants_proxy():
+            return self._proxy()
+        self.send_error(501, "Unsupported method (%r)" % self.command)
 
 
 class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):

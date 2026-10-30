@@ -211,13 +211,14 @@ shallow depth of field, photorealistic, fine skin detail, subtle film grain
 
 **UI → API 是怎么转的**（`Comfy.uiToApi`）：拉一次 ComfyUI 的 `/object_info` 拿到每个节点类型的输入定义，然后
 
-1. **连线**：按 `links` 的 `targetSlot` 对齐到该节点的「连接型输入」顺序（`model`/`positive`/`latent_image` 这类），得到 `["上游节点id", 槽位]`
-2. **参数**：按 `/object_info` 里 `required` + `optional` 的键顺序，把 `widgets_values` 逐个填进对应的 widget；`seed` 后面那个 `randomize`/`fixed` 控制项会自动跳过
-3. **过滤**：`Note`/`Reroute`/`PrimitiveNode` 不提交，静音（mode 2）和旁路（mode 4）的节点跳过并记警告
+1. **连线**：输入名直接取自 `node.inputs`，所以 **widget 输入被链接也能接上**（比如 rgthree 的 Seed 节点连到 KSampler 的 seed）；`links` 数组只在 `node.inputs` 缺失时兜底
+2. **旁路直通**：被旁路（mode 4）的节点和 `Reroute` 不会提交，但**连线会沿它们的输入直通到上游**——`UNET → 旁路LoRA → 旁路LoRA → LoRA` 转出来就是 `UNET → LoRA`，模型链不断
+3. **参数**：按 `/object_info` 里 `required` + `optional` 的键顺序，把 `widgets_values` 逐个填进对应的 widget；widget 输入即使被链接也仍占一个参数位（`seed` 后面那个 `randomize`/`fixed` 控制项会自动跳过）
+4. **过滤**：`Note`/`PrimitiveNode` 不提交，静音（mode 2）的节点跳过并记警告（它的输出会断，需要自己处理）
 
 转换后会自动存两份工作流：原始 UI 版（用来看图）+ `· API` 版（用来跑），生成节点绑定后者。工作流列表里 UI 格式的卡片也有个 ✦ 按钮可以随时手动转。
 
-> ComfyUI 需要在设置里填地址。跨域要放开：启动时加 `--enable-cors-header`，官方桌面版默认允许。
+> **跨域不用改 ComfyUI 启动参数**：新版 ComfyUI 会拒绝陌生 Origin（403、无 CORS 头），浏览器直连必挂。`serve.py` 自带本地反向代理 `/comfy?u=<目标>`（只监听 127.0.0.1），前端请求直连失败会自动改走代理并记住，对 `--enable-cors-header` 和桌面版同样兼容。旧版 serve.py 没有这个代理，改完代码记得重启 `serve.py` 再刷新页面。
 
 ### 图库 → 画布：把旧图变成下一轮的起点
 
@@ -298,6 +299,7 @@ ai-image-vault/
 ├── demo/               # 三张示例图，其中两张带内嵌生成参数
 ├── scripts/
 │   └── fetch_reference.py  # 克隆后拉取 2906 张参考图缩略图（幂等、可续传）
+│   └── make_icons.py       # 重新生成 favicon.ico / apple-touch-icon（纯标准库，无 PIL）
 ├── reference/          # 两个参考图库
 │   ├── data.js         # 两份元数据内联版（file:// 双击可用，优先加载）
 │   ├── outfits.json    # 1407 条服装元数据（编号/分类/关键词）

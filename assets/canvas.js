@@ -1182,6 +1182,10 @@ window.Canvas = (function () {
       }
     }
 
+    if (isUI) {
+      if (convertError) baseWf.note = `UI 格式 · 转 API 失败：${convertError}`;
+    }
+
     await DB.put('workflows', baseWf);
     await V.reload();
 

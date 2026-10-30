@@ -44,19 +44,57 @@ window.Comfy = (function () {
     return m;
   }
 
-  async function req(path, opts = {}) {
-    let res;
-    try {
-      res = await fetch(url(path), opts);
-    } catch (e) {
-      throw new Error(friendly(e));
-    }
+  // 请求路由：'auto' 先直连，被拒（跨域 403 / TypeError）就改走 serve.py 的本地反代并记住
+  let route = 'auto';
+
+  function loomProxy(abs) {
+    return '/comfy?u=' + encodeURIComponent(abs);
+  }
+
+  async function finishRes(path, res) {
     if (!res.ok) {
       let detail = '';
       try { detail = (await res.text()).slice(0, 300); } catch { }
       throw new Error(`ComfyUI ${path} → HTTP ${res.status}${detail ? ' · ' + detail : ''}`);
     }
     return res;
+  }
+
+  async function req(path, opts = {}) {
+    const abs = url(path);
+    let lastErr = null;
+
+    // 1) 直连（ComfyUI 带 --enable-cors-header 或桌面版时可用）
+    if (route !== 'proxy') {
+      try {
+        const res = await fetch(abs, opts);
+        if (res.status !== 403) {
+          if (route === 'auto') route = 'direct';
+          return finishRes(path, res);
+        }
+        lastErr = new Error('ComfyUI 拒绝了跨源请求（HTTP 403）');
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+
+    // 2) 走本地 serve.py 反代 /comfy?u=<目标>，绕开浏览器跨域限制
+    try {
+      const res = await fetch(loomProxy(abs), opts);
+      if (res.status === 404) {
+        let t = '';
+        try { t = (await res.text()).slice(0, 120); } catch { }
+        if (/File not found/i.test(t)) {
+          throw new Error('本地 serve.py 没有 /comfy 代理（版本太旧），请重启 serve.py 后刷新页面');
+        }
+      }
+      route = 'proxy';
+      return finishRes(path, res);
+    } catch (e) {
+      if (e && /serve\.py/.test(e.message)) throw e;
+      // 代理也不通时，优先报直连的错误（更有指向性）
+      throw new Error(friendly(lastErr || e));
+    }
   }
 
   /* ---------------- 基础 ---------------- */
@@ -353,8 +391,27 @@ window.Comfy = (function () {
         .map(([k]) => k);
     };
 
-    // 从 links 反查每个节点收到的输入：[linkId, originId, originSlot, targetId, targetSlot, type]
+    // linkId → 来源节点/槽：[linkId, originId, originSlot, ...] 或对象形式
+    const linkMap = {};
+    (uiWf.links || []).forEach(l => {
+      if (Array.isArray(l)) linkMap[l[0]] = { origin: l[1], slot: l[2] };
+      else if (l && l.id != null) linkMap[l.id] = { origin: l.origin_id, slot: l.origin_slot };
+    });
+
+    // 每个节点收到的输入，键用 node.inputs 里的名字 —— 这样 widget 输入被链接也能覆盖到
+    // （如 rgthree 的 Seed 节点连到 KSampler 的 seed widget 输入）
     const incoming = {};
+    uiWf.nodes.forEach(tn => {
+      if (!tn || tn.id == null) return;
+      (tn.inputs || []).forEach(inp => {
+        if (!inp || inp.link == null || !inp.name) return;
+        const lm = linkMap[inp.link];
+        if (!lm) return;
+        (incoming[tn.id] = incoming[tn.id] || {})[inp.name] = [String(lm.origin), lm.slot];
+      });
+    });
+
+    // links 数组兜底（node.inputs 缺失时，target_slot 按「连接型输入」顺序对号）
     (uiWf.links || []).forEach(l => {
       let oid, oslot, tid, tslot;
       if (Array.isArray(l)) { oid = l[1]; oslot = l[2]; tid = l[3]; tslot = l[4]; }
@@ -363,16 +420,31 @@ window.Comfy = (function () {
       const tn = nodesById[tid];
       if (!tn) return;
       const name = connNamesOf(tn)[tslot];
-      if (!name) return;
+      if (!name || (incoming[tid] && incoming[tid][name])) return;
       (incoming[tid] = incoming[tid] || {})[name] = [String(oid), oslot];
     });
 
-    // 补充：node.inputs 里带 link 的（links 数组缺失时的兜底）
-    const linkMap = {};
-    (uiWf.links || []).forEach(l => {
-      if (Array.isArray(l)) linkMap[l[0]] = { origin: l[1], slot: l[2] };
-      else if (l && l.id != null) linkMap[l.id] = { origin: l.origin_id, slot: l.origin_slot };
-    });
+    // 旁路(mode 4)与 Reroute 节点不会被提交 —— 沿它们的第一条输入把连线直通过去
+    // （例：UNET → 旁路LoRA → 旁路LoRA → LoRA，直通后等价于 UNET → LoRA）
+    const isPassThrough = n => !!n && (n.mode === 4 || n.type === 'Reroute');
+    const firstLinkOf = n => {
+      for (const inp of (n.inputs || [])) {
+        if (inp && inp.link != null && linkMap[inp.link]) {
+          return [String(linkMap[inp.link].origin), linkMap[inp.link].slot];
+        }
+      }
+      return null;
+    };
+    function resolveRef(oid, oslot) {
+      for (let i = 0; i < 32; i++) {
+        const on = nodesById[oid];
+        if (!isPassThrough(on)) return [oid, oslot];
+        const nxt = firstLinkOf(on);
+        if (!nxt) return null;
+        [oid, oslot] = nxt;
+      }
+      return null;
+    }
 
     const api = {};
     const warnings = [];
@@ -383,7 +455,7 @@ window.Comfy = (function () {
       // 纯前端节点不提交
       if (['Note', 'MarkdownNote', 'Reroute', 'PrimitiveNode'].includes(node.type)) continue;
       if (node.mode === 2) { warnings.push(`${node.type} 已静音，已跳过`); continue; }
-      if (node.mode === 4) { warnings.push(`${node.type} 已旁路，已跳过`); continue; }
+      if (node.mode === 4) { warnings.push(`${node.type} 已旁路，连线已直通到它的上游`); continue; }
 
       const def = objectInfo[node.type];
       if (!def) throw new Error(`ComfyUI 里找不到节点「${node.type}」，确认对应插件已安装`);
@@ -401,26 +473,37 @@ window.Comfy = (function () {
       });
 
       const inputs = {};
+      const takeLink = (name, raw) => {
+        const r = resolveRef(raw[0], raw[1]);
+        if (!r) return false;
+        inputs[name] = r;
+        linkedCount++;
+        return true;
+      };
       for (const [name, spec] of Object.entries(specs)) {
         const type = Array.isArray(spec) ? spec[0] : spec;
         const opts = (Array.isArray(spec) ? spec[1] : null) || {};
+        const widgetish = !opts.forceInput && isWidgetType(type);
+        // widget 输入即使被链接，widgets_values 里仍占一位（seed 后面还跟着 randomize/fixed 控制项）
+        const bumpWidget = () => {
+          if (!widgetish || wi >= values.length) return;
+          wi++;
+          const ctrl = values[wi];
+          if (typeof ctrl === 'string' && CONTROL_WORDS.has(ctrl)) wi++;
+        };
 
-        // 1) links 反查优先
-        if (incoming[node.id] && incoming[node.id][name]) {
-          inputs[name] = incoming[node.id][name];
-          linkedCount++;
-          continue;
-        }
+        // 1) 已连线的输入：解析直通后引用上游节点
+        const raw = (incoming[node.id] || {})[name];
+        if (raw && takeLink(name, raw)) { bumpWidget(); continue; }
         // 2) node.inputs 兜底
-        if (linkedBySlot[name] != null && linkMap[linkedBySlot[name]]) {
+        if (!raw && linkedBySlot[name] != null && linkMap[linkedBySlot[name]]) {
           const l = linkMap[linkedBySlot[name]];
-          inputs[name] = [String(l.origin), l.slot];
-          linkedCount++;
-          continue;
+          if (takeLink(name, [String(l.origin), l.slot])) { bumpWidget(); continue; }
         }
         if (opts.forceInput) continue;
         if (!isWidgetType(type)) continue;
 
+        // 3) 其余按顺序吃 widgets_values
         if (wi < values.length) {
           inputs[name] = values[wi++];
           widgetCount++;
