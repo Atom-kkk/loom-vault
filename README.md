@@ -27,6 +27,18 @@
 
 想先看看效果：把 `demo/` 里的三张图拖进窗口，其中两张带内嵌参数（A1111 与 ComfyUI），会自动解析出提示词、种子、步数、LoRA。
 
+### 本地出图（无限画布 + ComfyUI 引擎）
+
+画布的「输出」节点能把提示词和参考图写成工作流，交给本地 ComfyUI 出图。Loom 会**自动拉起 / 复用本地引擎**，你不用手动开 ComfyUI：
+
+1. **装一个 ComfyUI**（引擎）：官方桌面版 [Comfy Desktop](https://www.comfy.org/download) 或独立版均可。
+2. **设置 → ComfyUI**：填它的「引擎目录」（含 `main.py` 的那层，如 `/Users/你/ComfyUI-Installs/ComfyUI/ComfyUI`）。
+3. **画布 → 高级选项**：把模型 / LoRA 目录指过来（如 `~/ComfyUI-Shared/models/checkpoints`），Loom 会写进引擎的 `extra_model_paths.yaml`，无需复制文件。
+4. 导入工作流（或从「简易节点包」拿一个）→ 写提示词 → 点「生成」，Loom 自动拉起引擎出图。
+
+> 首次冷启动引擎 + 加载大模型可能需要 30~90 秒，画布上会显示「启动引擎中…」。
+> 模型文件本身不在本仓库（太大），需自行下载 `.safetensors` 放进对应目录。
+
 ---
 
 ## 它解决什么问题
