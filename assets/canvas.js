@@ -1225,29 +1225,29 @@ window.Canvas = (function () {
      绑定工作流
      ============================================================ */
   function pickWorkflow(n) {
-    const wfs = V.state.workflows || [];
-    if (!wfs.length) return V.toast('还没有工作流，先点顶部「导入工作流」', 'err');
+    const wfs = (V.state.workflows || []).filter(w => {
+      // 只列出能直接提交的 API 格式；UI 格式绑了也跑不了，不列出来
+      return !String(w.content || '').includes('"nodes"');
+    });
+    if (!wfs.length) return V.toast('还没有可用的工作流，先点顶部「导入工作流」', 'err');
 
     V.openModal({
       title: '绑定工作流',
       sub: '生成节点会把提示词和参考图写进这个工作流再提交',
       wide: true,
-      body: wfs.length ? `<div class="entity-list">
+      body: `<div class="entity-list">
         ${wfs.map(w => {
-          const isUI = String(w.content || '').includes('"nodes"');
           return `<div class="entity">
             <div class="entity-mark">${V.icon('flow', 15)}</div>
             <div class="entity-main">
               <b>${esc(w.name)}</b>
-              <small>${isUI ? 'UI 格式（可视化，不能直接提交）' : 'API 格式 · 可提交'}</small>
-              <em>${esc(w.note || '')} · ${w.nodes || '?'} 节点</em>
             </div>
             <button class="btn sm ${n.data.workflowId === w.id ? 'primary' : ''}" data-bindwf="${w.id}">
               ${n.data.workflowId === w.id ? '已绑定' : '绑定'}
             </button>
           </div>`;
         }).join('')}
-      </div>` : `<div class="empty" style="padding:40px 0">${V.icon('flow', 34)}<b>还没有工作流</b></div>`,
+      </div>`,
       footer: `<button class="btn" data-close>关闭</button>`,
       onMount: (box, close) => {
         box.querySelectorAll('[data-bindwf]').forEach(b => b.onclick = () => {
