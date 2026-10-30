@@ -9,3 +9,7 @@ __pycache__/
 reference/outfits/
 reference/faces/
 reference/_failed.txt
+
+# 本地引擎状态（含路径/pid，属本机，不入库）
+.engine.json
+.engine.log
