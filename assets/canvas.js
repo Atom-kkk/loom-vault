@@ -1749,12 +1749,22 @@ window.Canvas = (function () {
       body: `
         <div class="pk-sec">
           <div class="entity-list">
-            ${pack.map(p => `<div class="entity-row">
+            ${pack.map(p => {
+              const wf = (V.state.workflows || []).find(w => w.id === p.wfId);
+              const note = wf?.note || '';
+              // 把 note 里的 URL 转成可点击链接
+              const noteHtml = esc(note).replace(/(https?:\/\/[^\s，。；]+)/g,
+                '<a href="$1" target="_blank" rel="noopener">$1</a>');
+              return `<div class="entity-row">
                 <div class="entity-mark">${V.icon('layers', 15)}</div>
-                <div class="entity-main"><b>${esc(p.name || p.wfId)}</b></div>
+                <div class="entity-main">
+                  <b>${esc(p.name || p.wfId)}</b>
+                  ${note ? `<span class="entity-sub">${noteHtml}</span>` : ''}
+                </div>
                 <button class="btn sm primary" data-packadd="${esc(p.wfId)}">放上画布</button>
                 <button class="btn sm" data-packdel="${esc(p.wfId)}" title="移出这个包">${V.icon('close', 14)}</button>
-              </div>`).join('') || `<div class="empty">
+              </div>`;
+            }).join('') || `<div class="empty">
                 ${V.icon('layers', 34)}<b>还没收录工作流</b>
                 <span>点顶部「导入工作流」选一个 ComfyUI 工作流，会自动打包成简易节点并收在这里</span>
               </div>`}

@@ -281,9 +281,61 @@ window.REF = (function () {
     return m;
   }
 
+  /* 姿势视角顺序（正面优先，用于组内排序） */
+  const POSE_VIEW_ORDER = ['正面', '侧面', '斜侧', '俯视', '仰视'];
+
+  /**
+   * 把 filtered('poses') 的结果按「姿势编号 + 体系」聚合成组。
+   * 同一姿势在不同体系下各成一组；组内是该姿势的全部视角（正面/侧面/斜侧/俯视/仰视）。
+   * 每组返回 { code, name, cls, cat, views:[item...], idx }，views 已按固定视角顺序排好；
+   * idx 是组内第一个 item 在 filtered 结果里的下标（用于打开灯箱）。
+   */
+  function poseGroups() {
+    const list = filtered('poses');
+    const idxOf = new Map(list.map((it, i) => [it.id, i]));
+    const map = new Map();
+    list.forEach(it => {
+      const key = it.code + '|' + it.cat;
+      if (!map.has(key)) {
+        map.set(key, { code: it.code, name: it.name, cls: it.cls, cat: it.cat, views: [] });
+      }
+      map.get(key).views.push(it);
+    });
+    const groups = [...map.values()];
+    groups.forEach(g => {
+      g.views.sort((a, b) => {
+        const ia = POSE_VIEW_ORDER.indexOf(a.angle);
+        const ib = POSE_VIEW_ORDER.indexOf(b.angle);
+        return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+      });
+      g.idx = idxOf.get(g.views[0].id) ?? 0;
+    });
+    // 按编号排序，让同一姿势的各体系组相邻
+    groups.sort((a, b) => (a.code || '').localeCompare(b.code || '', undefined, { numeric: true }));
+    return groups;
+  }
+
   /* ============================================================
      渲染
      ============================================================ */
+  /** 姿势组卡片：一个姿势在该体系下的全部视角整合成一张卡片 */
+  function poseCardHTML(group) {
+    const main = group.views[0];
+    const views = group.views;
+    const dots = views.map(v => {
+      const on = v === main;
+      return `<span class="pose-view-dot ${on ? 'on' : ''}" title="${esc(v.angle)}">${esc(v.angle === '正面' ? '正' : v.angle === '侧面' ? '侧' : v.angle === '斜侧' ? '斜' : v.angle === '俯视' ? '俯' : '仰')}</span>`;
+    }).join('');
+    return `<div class="ref-card pose-group" data-ref="poses" data-index="${group.idx}">
+        <img class="pose-main" src="${esc(main.thumb)}" loading="lazy" decoding="async" alt="${esc(main.id)}">
+        <div class="pose-views">${dots}</div>
+        <div class="ref-hover">
+          <div class="ref-id">${esc(group.code)} · ${esc(group.cls || '')}</div>
+          <div class="ref-kw">${esc(group.name || '')} · ${views.length} 视角</div>
+        </div>
+      </div>`;
+  }
+
   function cardHTML(kind, item, index) {
     if (kind === 'outfits') {
       return `<div class="ref-card" data-ref="outfits" data-index="${index}">
@@ -365,6 +417,14 @@ window.REF = (function () {
     if (!list.length) {
       return `<div class="empty">${V.icon('search', 40)}<b>没有匹配的图</b><p>换个关键词，或者清掉筛选条件。</p></div>`;
     }
+    // 姿势库：按「姿势 + 体系」聚合，同一姿势的多个视角合成一张卡片
+    if (kind === 'poses') {
+      const groups = poseGroups();
+      const slice = groups.slice(0, st.shown || PAGE);
+      return `<div class="ref-grid tall" id="ref-grid">${slice.map(g => poseCardHTML(g)).join('')}</div>
+        <div id="ref-sentinel" style="height:1px"></div>
+        <div class="ref-more" id="ref-more">${slice.length < groups.length ? `已显示 ${slice.length} / ${groups.length} 组` : `共 ${groups.length} 组 · ${list.length} 张视角图`}</div>`;
+    }
     const slice = list.slice(0, st.shown || PAGE);
     return `<div class="ref-grid ${kind === 'faces' ? 'tall' : ''}" id="ref-grid">${slice.map((it, i) => cardHTML(kind, it, i)).join('')}</div>
       <div id="ref-sentinel" style="height:1px"></div>
@@ -406,17 +466,28 @@ window.REF = (function () {
       observeSentinel(container, kind);
     } else {
       const g = container.querySelector('#ref-grid');
-      const list = filtered(kind);
       if (g) {
         const from = g.children.length;
-        const next = list.slice(from, st.shown);
-        if (next.length) {
-          g.insertAdjacentHTML('beforeend', next.map((it, i) => cardHTML(kind, it, from + i)).join(''));
+        if (kind === 'poses') {
+          const groups = poseGroups();
+          const next = groups.slice(from, st.shown);
+          if (next.length) {
+            g.insertAdjacentHTML('beforeend', next.map(gr => poseCardHTML(gr)).join(''));
+          }
+        } else {
+          const list = filtered(kind);
+          const next = list.slice(from, st.shown);
+          if (next.length) {
+            g.insertAdjacentHTML('beforeend', next.map((it, i) => cardHTML(kind, it, from + i)).join(''));
+          }
         }
       }
       const more = container.querySelector('#ref-more');
-      const shown = Math.min(st.shown, list.length);
-      if (more) more.textContent = shown < list.length ? `已显示 ${shown} / ${list.length}` : `共 ${list.length} 张`;
+      if (more) {
+        const total = kind === 'poses' ? poseGroups().length : filtered(kind).length;
+        const shown = Math.min(st.shown, total);
+        more.textContent = shown < total ? `已显示 ${shown} / ${total}` : (kind === 'poses' ? `共 ${total} 组` : `共 ${total} 张`);
+      }
       observeSentinel(container, kind);
     }
   }
@@ -432,7 +503,7 @@ window.REF = (function () {
           if (!e.isIntersecting) return;
           const k = e.target.dataset.kind;
           const s = state[k];
-          const total = filtered(k).length;
+          const total = k === 'poses' ? poseGroups().length : filtered(k).length;
           if (s.shown >= total) return;
           s.shown = Math.min(total, (s.shown || PAGE) + PAGE);
           const c = document.querySelector('#view');
@@ -518,6 +589,13 @@ window.REF = (function () {
     const staged = isPose ? state.stage.pose?.id === item.id
       : isOutfit ? state.stage.outfit?.id === item.id : state.stage.face?.id === item.id;
 
+    // 姿势：找到当前 item 所在组，生成组内视角切换条
+    let poseViews = null;
+    if (isPose) {
+      const grp = poseGroups().find(g => g.views.some(v => v.id === item.id));
+      if (grp && grp.views.length > 1) poseViews = grp.views;
+    }
+
     lb.innerHTML = `
       <div class="lb-stage">
         <div class="lb-topbar">
@@ -536,6 +614,11 @@ window.REF = (function () {
           <img id="ref-big" src="${esc(item.thumb)}" alt="${esc(item.id)}" data-hi="${esc(item.id)}">
           ${list.length > 1 ? `<button class="lb-nav next" data-refact="ref-next">${V.icon('right', 18)}</button>` : ''}
         </div>
+        ${poseViews ? `<div class="lb-pose-views">
+            ${poseViews.map(v => `<button class="lb-pose-view ${v.id === item.id ? 'on' : ''}" data-refact="ref-poseview" data-view="${esc(v.id)}" title="${esc(v.angle)}">
+              <img src="${esc(v.thumb)}" alt="${esc(v.angle)}" loading="lazy"><span>${esc(v.angle)}</span>
+            </button>`).join('')}
+          </div>` : ''}
         <div class="lb-foot">
           <span id="ref-size">${isOutfit ? '360×540 缩略图' : `${item.w || '?'}×${item.h || '?'} 原图`}</span>
           <span>${index + 1} / ${list.length}</span>
@@ -949,13 +1032,46 @@ window.REF = (function () {
       return arr;
     };
 
+    // 姿势选择器：按「编号+体系」聚合成组（正面视角优先）
+    const groupsOf = () => {
+      const map = new Map();
+      listOf().forEach(it => {
+        const key = it.code + '|' + it.cat;
+        if (!map.has(key)) map.set(key, { code: it.code, name: it.name, cls: it.cls, cat: it.cat, views: [] });
+        map.get(key).views.push(it);
+      });
+      const groups = [...map.values()];
+      groups.forEach(g => g.views.sort((a, b) =>
+        (POSE_VIEW_ORDER.indexOf(a.angle) < 0 ? 99 : POSE_VIEW_ORDER.indexOf(a.angle)) -
+        (POSE_VIEW_ORDER.indexOf(b.angle) < 0 ? 99 : POSE_VIEW_ORDER.indexOf(b.angle))));
+      groups.sort((a, b) => (a.code || '').localeCompare(b.code || '', undefined, { numeric: true }));
+      return groups;
+    };
+
     const gridOf = () => {
+      if (isPose) {
+        const groups = groupsOf();
+        const slice = groups.slice(0, shown);
+        if (!slice.length) return `<div class="empty" style="padding:40px 0">${V.icon('search', 32)}<b>没有匹配</b></div>`;
+        return `<div class="ref-grid tall" id="pk-grid">
+          ${slice.map(g => {
+            const main = g.views[0];
+            const picked = state.stage.pose && g.views.some(v => v.id === state.stage.pose.id);
+            return `<div class="ref-card pose-group ${picked ? 'picked' : ''}" data-pk="${esc(main.id)}">
+              <img class="pose-main" src="${esc(main.thumb)}" loading="lazy" alt="">
+              <div class="pose-views">${g.views.map(v => `<span class="pose-view-dot ${v === main ? 'on' : ''}" title="${esc(v.angle)}">${esc(v.angle === '正面' ? '正' : v.angle === '侧面' ? '侧' : v.angle === '斜侧' ? '斜' : v.angle === '俯视' ? '俯' : '仰')}</span>`).join('')}</div>
+              <div class="ref-hover"><div class="ref-kw">${esc(g.name || '')} · ${g.views.length} 视角</div></div>
+            </div>`;
+          }).join('')}
+        </div>
+        <div class="ref-more">${slice.length < groups.length ? `已显示 ${slice.length} / ${groups.length} 组，往下滚加载更多` : `共 ${groups.length} 组`}</div>`;
+      }
       const arr = listOf().slice(0, shown);
       if (!arr.length) return `<div class="empty" style="padding:40px 0">${V.icon('search', 32)}<b>没有匹配</b></div>`;
       return `<div class="ref-grid ${isFace ? 'tall' : ''}" id="pk-grid">
         ${arr.map((it, i) => `<div class="ref-card ${state.stage[stageOf(kind)]?.id === it.id ? 'picked' : ''}" data-pk="${i}">
           <img src="${esc(it.thumb)}" loading="lazy" alt="">
-          <div class="ref-hover"><div class="ref-kw">${esc(isPose ? (it.name || '') + ' · ' + (it.angle || '') : isFace ? (state.faces.meta?.lengths?.[it.len] || '') : (it.kw || ''))}</div></div>
+          <div class="ref-hover"><div class="ref-kw">${esc(isFace ? (state.faces.meta?.lengths?.[it.len] || '') : (it.kw || ''))}</div></div>
         </div>`).join('')}
       </div>
       <div class="ref-more">${arr.length < listOf().length ? `已显示 ${arr.length} / ${listOf().length}，往下滚加载更多` : `共 ${arr.length} 张`}</div>`;
@@ -977,13 +1093,19 @@ window.REF = (function () {
         const count = box.querySelector('#pk-count');
         const paint = () => {
           body.innerHTML = gridOf();
-          count.textContent = `${listOf().length} 张`;
+          count.textContent = isPose ? `${groupsOf().length} 组` : `${listOf().length} 张`;
           bindPicks();
         };
         const bindPicks = () => {
           body.querySelectorAll('[data-pk]').forEach(el => {
             el.onclick = () => {
-              const item = listOf()[Number(el.dataset.pk)];
+              let item;
+              if (isPose) {
+                // data-pk 存的是组内正面视角的 item id
+                item = listOf().find(x => x.id === el.dataset.pk);
+              } else {
+                item = listOf()[Number(el.dataset.pk)];
+              }
               if (!item) return;
               setStage(kind, item);
               closeFn();
@@ -996,7 +1118,7 @@ window.REF = (function () {
         const scrollHost = box.querySelector('.modal-body') || box;
         scrollHost.addEventListener('scroll', () => {
           if (scrollHost.scrollTop + scrollHost.clientHeight > scrollHost.scrollHeight - 300) {
-            const total = listOf().length;
+            const total = isPose ? groupsOf().length : listOf().length;
             if (shown < total) { shown = Math.min(total, shown + PAGE); paint(); }
           }
         });
@@ -1062,6 +1184,13 @@ window.REF = (function () {
     if (a === 'ref-close') return close();
     if (a === 'ref-prev') return step(-1);
     if (a === 'ref-next') return step(1);
+    if (a === 'ref-poseview') {
+      const vid = act.dataset.view;
+      const li = filtered(state.lb.kind);
+      const gi = li.findIndex(x => x.id === vid);
+      if (gi >= 0) { state.lb.index = gi; renderLightbox(); }
+      return;
+    }
     if (a === 'ref-copy-kw') {
       const t = isOutfit ? item.kw : isPose ? item.name : (item.style || item.id);
       await U.copy(t || '');

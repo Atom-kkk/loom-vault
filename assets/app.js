@@ -1394,6 +1394,7 @@ window.Vault = (function () {
     }
 
     await DB.ensureSeed();
+    if (window.BUILTIN) await BUILTIN.seed().catch(() => {});
     await reload();
     await AI.load();
     bindGlobal();

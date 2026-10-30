@@ -528,7 +528,7 @@
               <button class="icon-btn" data-act="wf-del" data-id="${w.id}" title="删除">${icon('trash', 14)}</button>
             </div>
           </div>
-          ${w.note ? `<p class="desc">${esc(w.note)}</p>` : ''}
+          ${w.note ? `<p class="desc">${esc(w.note).replace(/(https?:\/\/[^\s，。；]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>')}</p>` : ''}
           <div class="model-meta">
             <span>节点 <b>${w.nodes || '—'}</b></span>
             <span><b>${U.fmtSize(w.size)}</b></span>

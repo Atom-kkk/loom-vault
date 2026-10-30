@@ -683,6 +683,42 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
 }
 .ref-grid.tall .ref-card img { aspect-ratio: 4 / 5; }
 
+/* 姿势组卡片：同一姿势多视角聚合 */
+.ref-card.pose-group { padding-bottom: 26px; }
+.ref-card.pose-group img.pose-main { aspect-ratio: 4 / 5; }
+.pose-views {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; gap: 3px; justify-content: center; align-items: center;
+  height: 26px; padding: 0 6px;
+  background: rgba(20, 19, 17, .78);
+}
+.pose-view-dot {
+  flex: 1; max-width: 30px;
+  font-size: 10px; line-height: 1; text-align: center;
+  color: var(--text-3);
+  padding: 3px 0; border-radius: 5px;
+}
+.pose-view-dot.on { background: var(--rose); color: #fff; }
+
+/* 灯箱内姿势视角切换条 */
+.lb-pose-views {
+  display: flex; gap: 8px; justify-content: center;
+  padding: 10px 12px 2px;
+}
+.lb-pose-view {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  background: none; border: 2px solid transparent; border-radius: 8px;
+  cursor: pointer; padding: 2px;
+}
+.lb-pose-view img {
+  width: 56px; height: 70px; object-fit: cover; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--panel-3);
+}
+.lb-pose-view span { font-size: 11px; color: var(--text-2); }
+.lb-pose-view.on { border-color: var(--rose); }
+.lb-pose-view.on span { color: var(--rose); }
+
+
 .ref-card:hover {
   transform: translateY(-2px);
   border-color: var(--line-strong);
@@ -976,6 +1012,13 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
 .entity-row .entity-main span {
   display: block; font-size: 11px; color: var(--text-3);
   font-family: var(--mono); margin-top: 2px;
+}
+.entity-row .entity-main span.entity-sub {
+  font-family: inherit; color: var(--text-2);
+  line-height: 1.5; word-break: break-all;
+}
+.entity-row .entity-main span.entity-sub a {
+  color: var(--rose); text-decoration: underline;
 }
 
 /* ---------- 端口 ---------- */
