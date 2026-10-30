@@ -2,6 +2,13 @@
 
 本项目所有值得注意的改动都会记录在此。
 
+## [未发布]
+
+### 新增
+
+- **一键装引擎**：`scripts/setup-engine.sh`（Mac/Linux）与 `scripts/setup-engine.bat`（Windows），别人 clone 后跑一次，自动装好 ComfyUI 引擎（含 Python + PyTorch），无需手动折腾
+- serve.py 自动探测 `engine/` 目录作为引擎位置（setup 脚本装完即自动连上）
+
 ## [v1.0.0] - 2026-10-30
 
 首个正式版本。

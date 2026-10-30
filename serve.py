@@ -86,9 +86,20 @@ class Engine:
             return False
 
     # ---------- 配置 ----------
+    def _auto_discover(self):
+        """自动探测 setup-engine 脚本安装的引擎目录（engine/main.py 或 engine/ComfyUI/main.py）"""
+        for sub in ("engine", "engine/ComfyUI"):
+            p = os.path.join(ROOT, sub, "main.py")
+            if os.path.isfile(p):
+                return os.path.dirname(p)
+        return ""
+
     def cfg(self):
+        comfy_dir = self._state.get("comfy_dir", "")
+        if not comfy_dir:
+            comfy_dir = self._auto_discover()
         return {
-            "comfy_dir": self._state.get("comfy_dir", ""),
+            "comfy_dir": comfy_dir,
             "port": int(self._state.get("port", 8188)),
             "extra_args": self._state.get("extra_args", []),
             "pid": self._state.get("pid", None),

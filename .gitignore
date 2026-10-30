@@ -13,3 +13,6 @@ reference/_failed.txt
 # 本地引擎状态（含路径/pid，属本机，不入库）
 .engine.json
 .engine.log
+
+# 本地引擎（setup-engine 脚本自动下载，不入库，体积几个 GB）
+engine/

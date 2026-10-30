@@ -17,6 +17,16 @@
 
 ## 快速开始
 
+```bash
+git clone git@github.com:Atom-kkk/loom-vault.git
+cd loom-vault
+./scripts/setup-engine.sh      # ① 一键装本地引擎（Mac/Linux；Windows 用 scripts\setup-engine.bat）
+python3 serve.py                # ② 启动（或双击 start.command / start.bat）
+```
+
+> 只想要图库 / 提示词库 / 参考库（不接 ComfyUI 出图），跳过第 ① 步直接启动即可。
+> 想要画布出图，先跑 `setup-engine` 把本地引擎装好（首次下载几个 GB，约 10~30 分钟）。
+
 **Mac / Linux**：双击 `start.command`
 **Windows**：双击 `start.bat`
 **手动**：`python3 serve.py`（默认 8787，自动开浏览器）
@@ -32,10 +42,9 @@
 
 画布的「输出」节点能把提示词和参考图写成工作流，交给本地 ComfyUI 出图。Loom 会**自动拉起 / 复用本地引擎**，你不用手动开 ComfyUI：
 
-1. **装一个 ComfyUI**（引擎）：官方桌面版 [Comfy Desktop](https://www.comfy.org/download) 或独立版均可。
-2. **设置 → ComfyUI**：填它的「引擎目录」（含 `main.py` 的那层，如 `/Users/你/ComfyUI-Installs/ComfyUI/ComfyUI`）。
-3. **画布 → 高级选项**：把模型 / LoRA 目录指过来（如 `~/ComfyUI-Shared/models/checkpoints`），Loom 会写进引擎的 `extra_model_paths.yaml`，无需复制文件。
-4. 导入工作流（或从「简易节点包」拿一个）→ 写提示词 → 点「生成」，Loom 自动拉起引擎出图。
+1. **跑 `scripts/setup-engine`**：自动装好 ComfyUI 引擎（含 Python + PyTorch），并写进配置。别人 clone 后只需这一条命令。
+2. **画布 → 高级选项**：把模型 / LoRA 目录指过来（如 `~/ComfyUI-Shared/models/checkpoints`），Loom 会写进引擎的 `extra_model_paths.yaml`，无需复制文件。
+3. 导入工作流（或从「简易节点包」拿一个）→ 写提示词 → 点「生成」，Loom 自动拉起引擎出图。
 
 > 首次冷启动引擎 + 加载大模型可能需要 30~90 秒，画布上会显示「启动引擎中…」。
 > 模型文件本身不在本仓库（太大），需自行下载 `.safetensors` 放进对应目录。
