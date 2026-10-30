@@ -11,11 +11,14 @@ AI 织造所 · 本地启动器
 """
 
 import http.server
+import json
 import os
 import socket
 import socketserver
+import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 import webbrowser
@@ -23,6 +26,245 @@ from urllib.parse import parse_qs, urlparse
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_PORT = 8787
+
+
+# ============================================================
+# 本地出图引擎（ComfyUI）管理
+# 由 serve.py 作为本地宿主，负责「静默拉起 / 复用 / 路径管理」，
+# 让画布无需用户手动启动 ComfyUI。
+# ============================================================
+class Engine:
+    """本地 ComfyUI 引擎的进程管理与路径配置。
+
+    设计要点：
+    - 分离式：ComfyUI 以 start_new_session 独立存活，Loom 关闭不杀它，下次秒连。
+    - 无状态探测：优先看 8188 端口是否在监听，其次看是否由我们记录的 pid 在跑。
+    - 零依赖：只用标准库 subprocess / socket / urllib。
+    """
+
+    STATE_FILE = os.path.join(ROOT, ".engine.json")
+    _lock = threading.Lock()
+
+    def __init__(self):
+        self._state = self._load_state()
+
+    # ---------- 状态持久化 ----------
+    def _load_state(self):
+        try:
+            with open(self.STATE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _save_state(self):
+        try:
+            with open(self.STATE_FILE, "w", encoding="utf-8") as f:
+                json.dump(self._state, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    # ---------- 探测 ----------
+    @staticmethod
+    def port_open(port):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.5)
+        try:
+            s.connect(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
+        finally:
+            s.close()
+
+    def _pid_alive(self, pid):
+        if not pid:
+            return False
+        try:
+            os.kill(int(pid), 0)
+            return True
+        except OSError:
+            return False
+
+    # ---------- 配置 ----------
+    def cfg(self):
+        return {
+            "comfy_dir": self._state.get("comfy_dir", ""),
+            "port": int(self._state.get("port", 8188)),
+            "extra_args": self._state.get("extra_args", []),
+            "pid": self._state.get("pid", None),
+        }
+
+    def set_cfg(self, patch):
+        with self._lock:
+            if "port" in patch and patch["port"]:
+                try:
+                    patch["port"] = int(patch["port"])
+                except ValueError:
+                    patch["port"] = 8188
+            self._state.update(patch)
+            self._save_state()
+        return self.cfg()
+
+    # ---------- 路径管理 ----------
+    def paths(self):
+        return self._state.get("paths", {})
+
+    def set_paths(self, mapping):
+        """mapping: {"checkpoints": "/abs/dir", "vae": "/abs/dir", ...}
+        写入 ComfyUI 的 extra_model_paths.yaml，让外部目录挂进 models/。
+        """
+        with self._lock:
+            self._state["paths"] = mapping
+            self._save_state()
+        comfy_dir = self._state.get("comfy_dir", "")
+        if comfy_dir and os.path.isdir(comfy_dir):
+            self._write_yaml(comfy_dir, mapping)
+        return self.paths()
+
+    @staticmethod
+    def _write_yaml(comfy_dir, mapping):
+        target = os.path.join(comfy_dir, "extra_model_paths.yaml")
+        lines = ["# 由 Loom 画布「高级选项」自动生成", "loom_paths:", "    base_path: ."]
+        for key, path in (mapping or {}).items():
+            if not path:
+                continue
+            # 绝对路径原样写入；相对路径当作相对于 base_path
+            lines.append(f"    {key}: {path}")
+        try:
+            with open(target, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+        except OSError as e:
+            raise RuntimeError("写 extra_model_paths.yaml 失败：" + str(e))
+
+    def listdir(self, path):
+        """列出目录（供前端做路径选择器），限制在用户家目录内，防止越权浏览。"""
+        p = os.path.abspath(os.path.expanduser(path or "~"))
+        home = os.path.expanduser("~")
+        if not (p == home or p.startswith(home + os.sep)):
+            p = home
+        try:
+            entries = []
+            for name in sorted(os.listdir(p)):
+                full = os.path.join(p, name)
+                if os.path.isdir(full):
+                    entries.append({"name": name, "dir": True, "path": full})
+            # 目录排前面，文件排后面（只列 .safetensors/.ckpt/.pt 等模型文件）
+            for name in sorted(os.listdir(p)):
+                full = os.path.join(p, name)
+                if os.path.isfile(full) and name.lower().endswith(
+                    (".safetensors", ".ckpt", ".pt", ".pth", ".bin", ".gguf")
+                ):
+                    entries.append({"name": name, "dir": False, "path": full})
+            parent = os.path.dirname(p)
+            return {"path": p, "parent": parent if parent != p else None, "entries": entries}
+        except OSError as e:
+            return {"path": p, "error": str(e), "entries": []}
+
+    # ---------- 启动 / 停止 ----------
+    def _find_main(self, comfy_dir):
+        for name in ("main.py", "main.pyw"):
+            p = os.path.join(comfy_dir, name)
+            if os.path.isfile(p):
+                return p
+        return None
+
+    def start(self, wait=True, timeout=90):
+        """拉起 ComfyUI。返回 (ok, message)。"""
+        cfg = self.cfg()
+        comfy_dir = cfg["comfy_dir"]
+        port = cfg["port"]
+
+        # 已经在跑了
+        if self.port_open(port):
+            return True, "已在运行"
+
+        if not comfy_dir or not os.path.isdir(comfy_dir):
+            return False, "还没配置 ComfyUI 目录"
+
+        main = self._find_main(comfy_dir)
+        if not main:
+            return False, "ComfyUI 目录里没找到 main.py"
+
+        log_path = os.path.join(ROOT, ".engine.log")
+        logf = open(log_path, "a", encoding="utf-8", errors="replace")
+        cmd = [
+            sys.executable, main,
+            "--listen", "127.0.0.1",
+            "--port", str(port),
+        ] + list(cfg.get("extra_args") or [])
+        try:
+            proc = subprocess.Popen(
+                cmd, cwd=comfy_dir,
+                stdout=logf, stderr=logf,
+                start_new_session=True,  # 分离式：独立存活
+            )
+        except OSError as e:
+            return False, "启动失败：" + str(e)
+
+        with self._lock:
+            self._state["pid"] = proc.pid
+            self._save_state()
+
+        if not wait:
+            return True, "已发起启动（pid %d）" % proc.pid
+
+        # 轮询 /system_stats 直到就绪
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self._probe_ready(port):
+                return True, "已启动（pid %d）" % proc.pid
+            if proc.poll() is not None:
+                return False, "进程提前退出（code %s），见 .engine.log" % proc.returncode
+            time.sleep(1.5)
+        return False, "启动超时（%ds），见 .engine.log" % timeout
+
+    @staticmethod
+    def _probe_ready(port):
+        try:
+            with urllib.request.urlopen(
+                "http://127.0.0.1:%d/system_stats" % port, timeout=3
+            ) as r:
+                return r.status == 200
+        except Exception:
+            return False
+
+    def status(self):
+        cfg = self.cfg()
+        port = cfg["port"]
+        running = self.port_open(port)
+        return {
+            "running": running,
+            "port": port,
+            "comfy_dir": cfg["comfy_dir"],
+            "pid": cfg["pid"] if self._pid_alive(cfg["pid"]) else None,
+            "paths": self.paths(),
+            "log_tail": self._log_tail(),
+        }
+
+    def _log_tail(self, n=40):
+        p = os.path.join(ROOT, ".engine.log")
+        try:
+            with open(p, "r", encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+            return "".join(lines[-n:])
+        except OSError:
+            return ""
+
+    def restart(self):
+        cfg = self.cfg()
+        pid = cfg.get("pid")
+        if pid:
+            try:
+                os.kill(int(pid), 15)  # SIGTERM
+                time.sleep(1.0)
+            except OSError:
+                pass
+        # 若还有别的进程占着端口，尝试温和地结束它（仅限我们记录的 pid 之外不做，避免误杀）
+        return self.start(wait=True)
+
+
+ENGINE = Engine()
+
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -87,9 +329,61 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _wants_proxy(self):
         return self.path.split("?")[0] == "/comfy"
 
+    # ---------------- /engine/* 本地引擎控制 ----------------
+    def _engine_json(self, obj, status=200):
+        data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _wants_engine(self):
+        return self.path.split("?")[0].startswith("/engine")
+
+    def _engine_route(self):
+        path = self.path.split("?")[0]
+        body = {}
+        if self.command == "POST":
+            length = int(self.headers.get("Content-Length") or 0)
+            if length:
+                try:
+                    body = json.loads(self.rfile.read(length).decode("utf-8"))
+                except Exception:
+                    body = {}
+
+        if path == "/engine/status":
+            return self._engine_json(ENGINE.status())
+
+        if path == "/engine/ensure":
+            ok, msg = ENGINE.start(wait=True)
+            return self._engine_json({"ok": ok, "message": msg, **ENGINE.status()},
+                                     status=200 if ok else 503)
+
+        if path == "/engine/restart":
+            ok, msg = ENGINE.restart()
+            return self._engine_json({"ok": ok, "message": msg, **ENGINE.status()},
+                                     status=200 if ok else 503)
+
+        if path == "/engine/config":
+            cfg = ENGINE.set_cfg(body or {})
+            return self._engine_json({"ok": True, **cfg})
+
+        if path == "/engine/paths":
+            paths = ENGINE.set_paths(body.get("paths") or body or {})
+            return self._engine_json({"ok": True, "paths": paths})
+
+        if path == "/engine/listdir":
+            return self._engine_json(ENGINE.listdir((body or {}).get("path", "~")))
+
+        return self._engine_json({"error": "unknown engine endpoint"}, 404)
+
     def do_GET(self):
         if self._wants_proxy():
             return self._proxy()
+        if self._wants_engine():
+            return self._engine_route()
         return super().do_GET()
 
     def do_HEAD(self):
@@ -100,6 +394,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
         if self._wants_proxy():
             return self._proxy()
+        if self._wants_engine():
+            return self._engine_route()
         self.send_error(501, "Unsupported method (%r)" % self.command)
 
 

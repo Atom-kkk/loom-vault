@@ -247,6 +247,7 @@ window.Canvas = (function () {
     actions: () => `
       <button class="btn" data-cv="import-wf">${V.icon('flow', 14)} 导入工作流</button>
       <button class="btn" data-cv="pack">${V.icon('layers', 14)} 简易节点包</button>
+      <button class="btn" data-cv="adv">${V.icon('cpu', 14)} 高级选项</button>
       <button class="btn" data-cv="list">${V.icon('layers', 14)} 画布</button>`,
     render: async (c) => {
       host = c;
@@ -335,6 +336,7 @@ window.Canvas = (function () {
         <span class="cv-tag">${esc(tagText)}</span>
         <span class="cv-title">${esc(nodeTitle(n))}</span>
         <div class="cv-head-ops">
+          ${n.type === 'gen' ? `<button class="cv-mini" data-cvnode="addref" title="加一个参考图节点">${V.icon('img', 13)}</button>` : ''}
           ${n.type === 'gen' ? `<button class="cv-mini" data-cvnode="run" title="生成">${V.icon('spark', 13)}</button>` : ''}
           ${n.type === 'image' || n.type === 'ref' ? `<button class="cv-mini" data-cvnode="replace" title="换图">${V.icon('upload', 13)}</button>` : ''}
           <button class="cv-mini" data-cvnode="del" title="删除">${V.icon('close', 13)}</button>
@@ -506,6 +508,7 @@ window.Canvas = (function () {
         if (act === 'del') removeNode(n.id);
         if (act === 'replace') pickImageFor(n);
         if (act === 'run') runGen(n);
+        if (act === 'addref') addRefToOutput(n);
         if (act === 'pick' && n.type === 'simple') pickImageFor(n);
       });
     });
@@ -982,6 +985,14 @@ window.Canvas = (function () {
 
     setStatus('准备中…');
     try {
+      // 确保本地引擎在跑（没跑就静默拉起），而不是直接盲报 502
+      try {
+        await Comfy.ensureEngine((t) => setStatus(t));
+      } catch (e) {
+        setStatus('引擎启动失败', 'error');
+        throw new Error('本地引擎启动失败：' + e.message + '。请到「设置 → ComfyUI」里配置引擎目录。');
+      }
+
       // 上传参考图（多张按连线顺序）
       const names = [];
       for (let i = 0; i < refs.length; i++) {
@@ -1495,6 +1506,19 @@ window.Canvas = (function () {
       w: 300,
       data: { text: extra.neg || '', role: '负向' }
     });
+
+    // 参考图节点：工作流有图位时铺出来（默认 1 个，用户可自行增删）
+    const refCount = extra.refCount != null ? extra.refCount : (slots > 0 ? 1 : 0);
+    const refNodes = [];
+    for (let i = 0; i < refCount; i++) {
+      const rn = addNode('ref', {
+        pos: { x: base.x + col, y: base.y + row / 2 + 260 + i * 230 },
+        w: 200,
+        data: { src: '', label: '参考图' + (refCount > 1 ? ' ' + (i + 1) : '') }
+      });
+      refNodes.push(rn);
+    }
+
     const out = addNode('gen', {
       pos: { x: base.x + col, y: base.y + row / 2 },
       w: 300,
@@ -1507,9 +1531,10 @@ window.Canvas = (function () {
       }
     });
 
-    // 连线：正向 → 输出 ← 负向
+    // 连线：正向 → 输出 ← 负向；参考图 → 输出
     cv.edges.push({ id: U.uid('e'), from: posPrompt.id, to: out.id });
     cv.edges.push({ id: U.uid('e'), from: negPrompt.id, to: out.id });
+    refNodes.forEach(rn => cv.edges.push({ id: U.uid('e'), from: rn.id, to: out.id }));
 
     renderAll();
     queueSave();
@@ -1519,6 +1544,21 @@ window.Canvas = (function () {
   // 兼容旧名：有些地方还在用 addSimpleNode
   function addSimpleNode(wfId, extra = {}) {
     return addSimpleFlow(wfId, extra);
+  }
+
+  /** 给输出节点加一个参考图节点并连线 */
+  function addRefToOutput(out) {
+    pushHistory();
+    const count = cv.edges.filter(e => e.to === out.id)
+      .map(e => nodeById(e.from)).filter(x => x && x.type === 'ref').length;
+    const rn = addNode('ref', {
+      pos: { x: out.x + (out.w || 300), y: out.y + 100 + count * 230 },
+      w: 200,
+      data: { src: '', label: '参考图 ' + (count + 1) }
+    });
+    cv.edges.push({ id: U.uid('e'), from: rn.id, to: out.id });
+    renderAll();
+    queueSave();
   }
 
   function toXY(v) {
@@ -1615,6 +1655,71 @@ window.Canvas = (function () {
   }
 
   /* ============================================================
+     高级选项：模型 / LoRA 等文件路径
+     ============================================================ */
+  async function advancedModal() {
+    // 读当前引擎状态与已配路径
+    let st = {}, dirs = [];
+    try { st = await Comfy.engineStatus(); } catch { st = {}; }
+    try { dirs = (await Comfy.listDir('~')).entries?.filter(e => e.dir)?.map(e => e.path) || []; } catch { }
+
+    const PATH_FIELDS = [
+      { key: 'checkpoints', label: '底模（checkpoint）', hint: '.safetensors / .ckpt 完整模型' },
+      { key: 'unet', label: 'UNET / 扩散模型', hint: 'Flux、Krea 等分离式模型' },
+      { key: 'clip', label: 'CLIP / 文本编码器', hint: '同上分离式模型' },
+      { key: 'vae', label: 'VAE', hint: '.safetensors' },
+      { key: 'loras', label: 'LoRA 目录', hint: 'LoRA 文件所在目录（可多个，工作流里指定）' },
+    ];
+
+    const paths = st.paths || {};
+    const field = (f) => `
+      <div class="field">
+        <label>${esc(f.label)}</label>
+        <input type="text" data-path="${f.key}" placeholder="绝对路径，如 /Users/xxx/models/checkpoints"
+               value="${esc(paths[f.key] || '')}">
+        <span class="hint">${esc(f.hint)}</span>
+      </div>`;
+
+    V.openModal({
+      title: '高级选项 · 模型路径',
+      sub: '把本地模型 / LoRA 目录指过来，Loom 写进引擎的 extra_model_paths.yaml，无需复制文件',
+      wide: true,
+      body: `
+        <div class="pk-sec">
+          <div class="form-grid">${PATH_FIELDS.map(field).join('')}</div>
+          ${dirs.length ? `<div class="hint" style="margin-top:10px">检测到的目录：${dirs.map(d => `<code>${esc(d)}</code>`).join(' ')}</div>` : ''}
+        </div>
+        <div class="pk-sec">
+          <h3>引擎状态</h3>
+          <p class="sub" id="adv-stat">
+            ${st.running
+        ? `<span style="color:var(--ok)">✓ 引擎运行中</span>（端口 ${esc(String(st.port || 8188))}）`
+        : `<span style="color:var(--text-3)">引擎未运行</span> —— 点「生成」时会自动拉起`}
+          </p>
+          ${st.log_tail ? `<details><summary>最近启动日志</summary><pre style="white-space:pre-wrap;font-size:11px;color:var(--text-3)">${esc(st.log_tail)}</pre></details>` : ''}
+        </div>`,
+      footer: `<button class="btn" data-close>取消</button>
+               <button class="btn primary" id="adv-save">保存路径</button>`,
+      onMount: (box, close) => {
+        box.querySelector('#adv-save').onclick = async () => {
+          const mapping = {};
+          box.querySelectorAll('[data-path]').forEach(inp => {
+            const v = inp.value.trim();
+            if (v) mapping[inp.dataset.path] = v;
+          });
+          try {
+            await Comfy.setEnginePaths(mapping);
+            V.toast('路径已保存，下次出图生效', 'ok');
+            close();
+          } catch (e) {
+            V.toast('保存失败：' + e.message, 'err');
+          }
+        };
+      }
+    });
+  }
+
+  /* ============================================================
      简易节点包
      ============================================================ */
   async function packRead() {
@@ -1698,6 +1803,7 @@ window.Canvas = (function () {
     if (a === 'import-wf') importWorkflow();
     if (a === 'list') canvasListModal();
     if (a === 'pack') simplePackModal();
+    if (a === 'adv') advancedModal();
   });
 
   return {

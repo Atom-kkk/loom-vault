@@ -744,6 +744,8 @@
     render: async (c) => {
       const providers = AI.providers();
       const agents = AI.agents();
+      let engineCfg = {};
+      try { engineCfg = await Comfy.engineStatus(); } catch { engineCfg = {}; }
 
       const providerRows = providers.map(p => `
         <div class="entity">
@@ -782,19 +784,25 @@
       c.innerHTML = `
         <div style="max-width:820px">
           <div class="section" style="margin-top:0" id="sec-comfy">
-            <div class="section-title">ComfyUI（本地出图）<span></span></div>
+            <div class="section-title">ComfyUI（本地出图引擎）<span></span></div>
             <p class="hint" style="margin:0 0 11px">
-              画布的「生成」节点把提示词和参考图写进工作流，提交给这个地址执行。
-              需要 ComfyUI 允许跨域：启动时加 <code>--enable-cors-header</code>。
+              画布的「输出」节点把提示词和参考图写进工作流，提交给本地引擎执行。
+              引擎由 Loom 托管：<b>点「生成」时会自动拉起，不用你手动开 ComfyUI</b>。
             </p>
             <div class="form-grid">
-              <div class="field"><label>服务地址</label>
+              <div class="field"><label>引擎目录（ComfyUI 安装位置）</label>
+                <input type="text" id="cf-dir" placeholder="~/ComfyUI 或 /path/to/ComfyUI" value="${esc(engineCfg.comfy_dir || '')}">
+                <span class="hint">填 ComfyUI 根目录（含 main.py 的那个）。找不到会尝试自动探测常见位置。</span></div>
+              <div class="field"><label>端口</label>
+                <input type="text" id="cf-port" value="${esc(String(engineCfg.port || 8188))}" placeholder="8188"></div>
+              <div class="field"><label>服务地址（一般不用改）</label>
                 <input type="text" id="cf-url" value="${esc(Comfy.base().replace(/^https?:\/\//, ''))}" placeholder="127.0.0.1:8188">
                 <span class="hint">只填主机和端口即可，自动补 http://</span></div>
               <div class="field"><label>&nbsp;</label>
-                <div style="display:flex;gap:8px">
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                  <button class="btn primary" data-act="engine-start">${icon('spark', 14)} 启动引擎</button>
                   <button class="btn" data-act="comfy-test">测试连接</button>
-                  <button class="btn primary" data-act="comfy-save">保存</button>
+                  <button class="btn" data-act="comfy-save">保存</button>
                 </div></div>
             </div>
             <div id="comfy-stat" style="margin-top:9px;font-size:11.5px;color:var(--text-3)"></div>
@@ -880,6 +888,29 @@
     if (!url) return toast('地址不能为空', 'err');
     Comfy.save({ baseUrl: url });
     toast('已保存', 'ok');
+  });
+
+  // 引擎目录 / 端口配置写入 serve.py
+  V.on('engine-start', async (el) => {
+    const dir = (document.querySelector('#cf-dir')?.value || '').trim();
+    const port = (document.querySelector('#cf-port')?.value || '').trim();
+    const url = comfyUrlFromInput();
+    if (url) Comfy.save({ baseUrl: url });
+
+    const stat = document.querySelector('#comfy-stat');
+    if (dir) {
+      try { await Comfy.setEngineConfig({ comfy_dir: dir, port: port || 8188 }); }
+      catch (e) { toast(e.message, 'err'); }
+    }
+    if (stat) stat.innerHTML = '<span style="color:var(--text-2)">正在启动引擎…（首次较慢，请稍候）</span>';
+    try {
+      const r = await Comfy.ensureEngine(() => {});
+      if (stat) stat.innerHTML = `<span style="color:var(--ok)">✓ 引擎就绪</span>（${esc(r.message || '')}）`;
+      toast('本地引擎已启动', 'ok');
+    } catch (e) {
+      if (stat) stat.innerHTML = `<span style="color:var(--danger)">✕ ${esc(e.message)}</span>`;
+      toast(e.message, 'err');
+    }
   });
 
   V.on('comfy-test', async (el) => {

@@ -104,6 +104,59 @@ window.Comfy = (function () {
     return j;
   }
 
+  /* ---------------- 本地引擎（serve.py /engine） ---------------- */
+  // 引擎由 serve.py 托管：探测 / 静默拉起 / 路径管理，让画布脱离手动启动 ComfyUI。
+
+  async function engineCall(path, body) {
+    const opts = body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : { method: 'POST' };
+    let res;
+    try {
+      res = await fetch('/engine' + path, opts);
+    } catch (e) {
+      throw new Error('本地引擎服务（serve.py）没在跑：请用 start.command 启动 Loom');
+    }
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok && j.message) throw new Error(j.message);
+    return j;
+  }
+
+  async function engineStatus() {
+    return engineCall('/status', {});
+  }
+
+  /** 确保本地 ComfyUI 在跑：探活，没跑就静默拉起。返回状态对象。 */
+  async function ensureEngine(onStatus = () => { }) {
+    let st;
+    try { st = await engineStatus(); } catch { st = { running: false }; }
+
+    // 已经能直连（可能是用户自己开的 ComfyUI），直接复用
+    if (st.running) {
+      try { await ping(); return { ...st, alreadyUp: true }; } catch { /* 端口开着但还没就绪，继续 ensure */ }
+    }
+
+    onStatus('正在启动本地引擎（首次较慢）…');
+    const r = await engineCall('/ensure', {});
+    if (!r.ok) {
+      throw new Error('本地引擎启动失败：' + (r.message || '未知原因'));
+    }
+    return r;
+  }
+
+  /** 配置引擎目录 / 端口 / 启动参数 */
+  async function setEngineConfig(cfg) {
+    return engineCall('/config', cfg);
+  }
+
+  /** 设置模型路径映射（写 extra_model_paths.yaml） */
+  async function setEnginePaths(paths) {
+    return engineCall('/paths', { paths });
+  }
+
+  /** 列目录（前端路径选择器用） */
+  async function listDir(path) {
+    return engineCall('/listdir', { path: path || '~' });
+  }
+
   async function objectInfo() {
     const res = await req('/object_info');
     return res.json();
@@ -654,6 +707,7 @@ window.Comfy = (function () {
     ping, objectInfo, objectInfoCached, queueInfo, uiToApi, widgetKeysOf,
     uploadImage, queue, history, fetchImage, run,
     openWs, closeWs, wsConnected: () => !!ws && ws.readyState === 1,
-    analyzeApi, applyInputs, extractImages
+    analyzeApi, applyInputs, extractImages,
+    ensureEngine, engineStatus, setEngineConfig, setEnginePaths, listDir
   };
 })();
