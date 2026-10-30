@@ -390,6 +390,7 @@ window.Canvas = (function () {
     d.style.top = n.y + 'px';
     d.dataset.id = n.id;
     if (n.w) d.style.width = n.w + 'px';
+    if (n.h) d.style.height = n.h + 'px';
 
     const tagText = n.type === 'wf'
       ? '#' + (n.data.rawId ?? n.data.apiId ?? '')
@@ -498,7 +499,8 @@ window.Canvas = (function () {
 
     d.innerHTML = head + body + `
       <div class="cv-port in" data-port="in"></div>
-      ${n.type !== 'gen' || true ? `<div class="cv-port out" data-port="out"></div>` : ''}`;
+      ${n.type !== 'gen' || true ? `<div class="cv-port out" data-port="out"></div>` : ''}
+      <i class="cv-resize" data-resize="se" title="拖这里自由缩放"></i>`;
 
     bindNodeEvents(d, n);
     return d;
@@ -636,6 +638,20 @@ window.Canvas = (function () {
     const gm = el.querySelector('.cv-gen-meta');
     if (gm) gm.addEventListener('click', e => { e.stopPropagation(); pickWorkflow(n); });
 
+    // 右下角手柄：自由拉伸（上下左右都可）
+    const rz = el.querySelector('.cv-resize');
+    if (rz) {
+      rz.addEventListener('pointerdown', e => {
+        e.stopPropagation();
+        e.preventDefault();
+        selectNode(n.id, e.shiftKey);
+        const curW = n.w || el.offsetWidth || 220;
+        const curH = el.offsetHeight || 120;
+        startResize(e, n, curW, curH);
+        try { rz.setPointerCapture?.(e.pointerId); } catch { }
+      });
+    }
+
     // 端口拖拽连线
     const out = el.querySelector('.cv-port.out');
     if (out) {
@@ -730,6 +746,15 @@ window.Canvas = (function () {
     };
   }
 
+  function startResize(e, n, w, h) {
+    drag = {
+      kind: 'resize', node: n,
+      sx: e.clientX, sy: e.clientY,
+      ow: w, oh: h,
+      moved: false, hist: false
+    };
+  }
+
   function onMove(e) {
     if (link) {
       const p = screenToWorld(e.clientX, e.clientY);
@@ -760,6 +785,19 @@ window.Canvas = (function () {
       if (el) { el.style.left = n.x + 'px'; el.style.top = n.y + 'px'; }
       renderEdges();
     }
+    if (drag.kind === 'resize') {
+      const n = drag.node;
+      if (!drag.hist) { pushHistory(); drag.hist = true; }
+      n.w = Math.max(140, Math.round(drag.ow + dx));
+      n.h = Math.max(96, Math.round(drag.oh + dy));
+      const el = world.querySelector(`.cv-node[data-id="${n.id}"]`);
+      if (el) {
+        el.style.width = n.w + 'px';
+        el.style.height = n.h + 'px';
+        el.classList.add('resizing');
+      }
+      renderEdges();
+    }
   }
 
   function onUp(e) {
@@ -774,6 +812,10 @@ window.Canvas = (function () {
       renderEdges();
     }
     if (drag?.moved) queueSave();
+    if (drag?.kind === 'resize') {
+      const el = world.querySelector(`.cv-node[data-id="${drag.node.id}"]`);
+      el?.classList.remove('resizing');
+    }
     drag = null;
   }
 
@@ -1753,117 +1795,31 @@ window.Canvas = (function () {
     await packWrite((await packRead()).filter(x => x.wfId !== wfId));
   }
 
-  async function saveTplWorkflow(t) {
-    const wf = {
-      id: U.uid('wf'),
-      name: t.name,
-      modelId: '',
-      format: 'api-json',
-      filename: 'loom-template.json',
-      size: JSON.stringify(t.api).length,
-      nodes: Object.keys(t.api).length,
-      content: JSON.stringify(t.api),
-      note: 'Loom 内置模板 · 提示词留了占位符，用简易节点填',
-      createdAt: Date.now()
-    };
-    await DB.put('workflows', wf);
-    await V.reload();
-    return wf;
-  }
-
   async function simplePackModal() {
-    let lists = null;
-    try { lists = Comfy.modelLists(await Comfy.objectInfoCached()); }
-    catch { V.toast('没连上 ComfyUI，模板里的模型只能手填文件名', 'err'); }
-
     const pack = await packRead();
-    const wfs = V.state.workflows || [];
-
-    const field = (name, arr, cur, kind = 'text') => {
-      if (arr && arr.length) {
-        return `<label>${esc(name)} <select data-f="${kind}">${arr.map(m =>
-          `<option${m === cur ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select></label>`;
-      }
-      return `<label>${esc(name)} <input type="text" data-f="${kind}" placeholder="填文件名" value="${esc(cur || '')}"></label>`;
-    };
-
-    const tplCard = t => `
-      <div class="pk-card">
-        <b>${esc(t.name)}</b>
-        <p>${esc(t.desc)}</p>
-        <div class="pk-fields">
-          ${t.need === 'split'
-    ? field('模型(UNET)', lists?.unet, lists?.unet?.[0], 'unet') + field('VAE', lists?.vae, lists?.vae?.[0], 'vae')
-    : t.need === 'ckpt+lora'
-      ? field('底模', lists?.ckpt, lists?.ckpt?.[0], 'model') + field('LoRA', lists?.lora, lists?.lora?.[0], 'lora')
-      : field('底模', lists?.ckpt, lists?.ckpt?.[0], 'model')}
-          ${field('宽', null, '1024', 'width')}
-          ${field('高', null, '1024', 'height')}
-          ${field('步数', null, '20', 'steps')}
-        </div>
-        <button class="btn primary sm" data-tpladd="${t.id}">放上画布</button>
-      </div>`;
 
     V.openModal({
       title: '简易节点包',
-      sub: '挑一个放上画布：只留「提示词 + 参考图 + 生成」三样',
+      sub: '导入过的工作流都会自动收在这里，点一下就能放上画布生图',
       wide: true,
       body: `
         <div class="pk-sec">
-          <h3>内置模板</h3>
-          <p class="sub">${lists ? '模型列表直接来自你的 ComfyUI' : '没连上 ComfyUI：模型名要自己填（和 ComfyUI 里的文件名一致即可）'}</p>
-          <div class="pk-grid">${Comfy.TEMPLATES.map(tplCard).join('')}</div>
-        </div>
-        <div class="pk-sec">
-          <h3>已收录（${pack.length}）</h3>
-          <p class="sub">打包过的工作流都会留在这里，下次一键放上画布</p>
           <div class="entity-list">
             ${pack.map(p => `<div class="entity-row">
+                <div class="entity-mark">${V.icon('layers', 15)}</div>
                 <div class="entity-main"><b>${esc(p.name || p.wfId)}</b></div>
                 <button class="btn sm primary" data-packadd="${esc(p.wfId)}">放上画布</button>
-                <button class="btn sm" data-packdel="${esc(p.wfId)}">移出</button>
-              </div>`).join('') || '<div class="empty">还没收录过，去下面「我的工作流」里打包一个</div>'}
-          </div>
-        </div>
-        <div class="pk-sec">
-          <h3>我的工作流</h3>
-          <p class="sub">把导入过的复杂工作流打包成简易节点（UI 格式需要先转成 API 才能跑）</p>
-          <div class="entity-list">
-            ${wfs.map(w => `<div class="entity-row">
-                <div class="entity-main">
-                  <b>${esc(w.name)}</b>
-                  <span>${w.format === 'api-json' ? 'API 格式 · 可以直接生成' : 'UI 格式 · 需要先转 API'}</span>
-                </div>
-                <button class="btn sm ${pack.some(p => p.wfId === w.id) ? '' : 'primary'}" data-wfpack="${esc(w.id)}">打包成简易节点</button>
-              </div>`).join('') || '<div class="empty">还没有工作流，先点顶部「导入工作流」</div>'}
+                <button class="btn sm" data-packdel="${esc(p.wfId)}" title="移出这个包">${V.icon('close', 14)}</button>
+              </div>`).join('') || `<div class="empty">
+                ${V.icon('layers', 34)}<b>还没收录工作流</b>
+                <span>点顶部「导入工作流」选一个 ComfyUI 工作流，会自动打包成简易节点并收在这里</span>
+              </div>`}
           </div>
         </div>`,
       footer: '<button class="btn" data-close>关闭</button>',
       onMount: (box, close) => {
-        const val = (card, k) => {
-          const el = card.querySelector(`[data-f="${k}"]`);
-          if (!el) return '';
-          return el.value;
-        };
-
-        box.querySelectorAll('[data-tpladd]').forEach(b => b.onclick = async () => {
-          const card = b.closest('.pk-card');
-          const o = {};
-          ['model', 'unet', 'vae', 'lora', 'width', 'height', 'steps'].forEach(k => {
-            const v = val(card, k);
-            if (v) o[k] = v;
-          });
-          if (!o.model && !o.unet) return V.toast('先选一个模型', 'err');
-          const t = Comfy.buildTemplate(b.dataset.tpladd, o);
-          const wf = await saveTplWorkflow(t);
-          addSimpleNode(wf.id);
-          await packAdd(wf.id, wf.name);
-          close();
-          V.toast('已放上画布：' + wf.name, 'ok');
-        });
-
-        box.querySelectorAll('[data-wfpack], [data-packadd]').forEach(b => b.onclick = async () => {
-          const id = b.dataset.wfpack || b.dataset.packadd;
+        box.querySelectorAll('[data-packadd]').forEach(b => b.onclick = async () => {
+          const id = b.dataset.packadd;
           const wf = (V.state.workflows || []).find(w => w.id === id);
           if (!wf) return V.toast('这套工作流已经不在库里了', 'err');
           addSimpleNode(id);

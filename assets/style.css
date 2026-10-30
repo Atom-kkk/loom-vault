@@ -781,6 +781,9 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
 .cv-node {
   position: absolute;
   min-width: 190px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   background: var(--panel);
   border: 1px solid var(--line-strong);
   border-radius: 12px;
@@ -788,6 +791,23 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
   user-select: none;
   transition: border-color .15s var(--ease), box-shadow .15s var(--ease);
 }
+/* 自由拉伸时关掉过渡，避免跟手 */
+.cv-node.resizing { transition: none; }
+/* 主体区在拉伸后撑满剩余高度，让内容可随高度扩展 */
+.cv-node > :not(.cv-node-head):not(.cv-port):not(.cv-resize) {
+  min-height: 0;
+}
+.cv-wf, .cv-gen-body, .cv-simple-ref { flex: 1; }
+.cv-node.resizing { cursor: nwse-resize; }
+.cv-resize {
+  position: absolute; right: 3px; bottom: 3px;
+  width: 13px; height: 13px; cursor: nwse-resize;
+  background:
+    linear-gradient(135deg, transparent 46%, var(--text-3) 46%, var(--text-3) 54%, transparent 54%);
+  opacity: .55; border-radius: 0 0 3px 0;
+}
+.cv-node:hover .cv-resize { opacity: .9; }
+.cv-node.resizing .cv-resize { opacity: 1; }
 .cv-node:hover { border-color: var(--text-3); }
 .cv-node.sel {
   border-color: var(--rose);
@@ -845,6 +865,13 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
   padding: 9px 12px 12px;
   font-family: var(--mono); font-size: 13px; line-height: 1.65;
   color: var(--text); resize: vertical; outline: none;
+}
+/* 节点被拉高时，提示词文本域跟着撑满，而不是卡在固定高度 */
+.cv-node[style*="height"] .cv-text,
+.cv-node.resizing .cv-text {
+  flex: 1 1 auto;
+  min-height: 60px;
+  max-height: none;
 }
 
 .cv-gen-body { border-bottom: 1px solid var(--line); }
