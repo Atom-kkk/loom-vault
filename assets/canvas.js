@@ -294,6 +294,8 @@ window.Canvas = (function () {
           </div>
         </div>
         <div class="cv-hud">
+          <button class="cv-tool cv-exit" data-cv="exit" title="退出画布（Esc）">${V.icon('back', 15)}<span>图库</span></button>
+          <div class="cv-hud-sep"></div>
           <button class="cv-tool" data-cv="add-prompt" title="提示词节点">${V.icon('edit', 15)}<span>提示词</span></button>
           <button class="cv-tool" data-cv="add-ref" title="参考图节点">${V.icon('img', 15)}<span>参考图</span></button>
           <button class="cv-tool" data-cv="add-gen" title="生成节点">${V.icon('spark', 15)}<span>生成</span></button>
@@ -303,10 +305,10 @@ window.Canvas = (function () {
           <div class="cv-hud-sep"></div>
           <button class="cv-tool" data-cv="fit" title="适应窗口">${V.icon('search', 15)}</button>
           <button class="cv-tool" data-cv="reset" title="100%">${V.icon('back', 15)}</button>
-          <span class="cv-zoom" id="cv-zoom">100%</span>
+          <button class="cv-zoom" id="cv-zoom" data-cv="zoom100" title="回到 100%（点一下）">100%</button>
         </div>
         <div class="cv-hint" id="cv-hint">
-          拖动空白处平移 · 滚轮缩放 · 右侧圆点拖到左侧圆点连线 · Delete 删除 · ⌘Z 撤销
+          拖动空白处平移 · 滚轮缩放 · 右侧圆点拖到左侧圆点连线 · Delete 删除 · ⌘Z 撤销 · Esc 退出画布
         </div>
       </div>`;
 
@@ -671,7 +673,10 @@ window.Canvas = (function () {
       world.querySelectorAll('.cv-node').forEach(el => el.classList.add('sel'));
       return;
     }
-    if (e.key === 'Escape') { selected.clear(); renderAll(); }
+    if (e.key === 'Escape') {
+      if (selected.size) { selected.clear(); renderAll(); }
+      else V.go('gallery');       // 没选中任何东西时，Esc 直接退出画布
+    }
   }
 
   /* ============================================================
@@ -710,11 +715,11 @@ window.Canvas = (function () {
     const pos = extra.pos || centerSpawn();
     const base = { id: U.uid('n'), type, x: pos.x, y: pos.y };
     const defaults = {
-      prompt: { w: 280, data: { text: '', role: '正向' } },
-      image: { w: 240, data: { src: '', label: '图片' } },
-      ref: { w: 200, data: { src: '', label: '参考图' } },
-      gen: { w: 300, data: { wfName: '', model: '', status: 'idle', statusText: '' } },
-      wf: { w: 220, data: {} }
+      prompt: { w: 320, data: { text: '', role: '正向' } },
+      image: { w: 260, data: { src: '', label: '图片' } },
+      ref: { w: 220, data: { src: '', label: '参考图' } },
+      gen: { w: 320, data: { wfName: '', model: '', status: 'idle', statusText: '' } },
+      wf: { w: 240, data: {} }
     }[type];
     const n = { ...base, ...defaults, ...extra, data: { ...defaults.data, ...(extra.data || {}) } };
     pushHistory();
@@ -1385,6 +1390,12 @@ window.Canvas = (function () {
     if (a === 'reset') {
       cv.view = { x: 80, y: 60, k: 1 };
       applyTransform();
+    }
+    if (a === 'exit') V.go('gallery');
+    if (a === 'zoom100') {
+      cv.view.k = 1;
+      applyTransform();
+      queueSave();
     }
     if (a === 'undo') undo();
     if (a === 'redo') redo();

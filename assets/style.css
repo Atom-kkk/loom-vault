@@ -745,7 +745,11 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
 /* ============================================================
    无限画布
    ============================================================ */
-#view.cv-host { padding: 0; overflow: hidden; }
+#view.cv-host {
+  padding: 0;
+  overflow: hidden;
+  position: relative;      /* 关键：.cv-wrap 的 inset:0 要以它为基准，否则铺满整个窗口 */
+}
 
 .cv-wrap { position: absolute; inset: 0; }
 .cv-viewport {
@@ -762,7 +766,8 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
 .cv-world {
   position: absolute; left: 0; top: 0;
   transform-origin: 0 0;
-  will-change: transform;
+  /* 不要加 will-change / translateZ：那会把这层交给合成器按当前倍率栅格化，
+     放大后文字就变成拉伸的位图。让浏览器每次按实际倍率重新绘制才清晰。 */
 }
 .cv-edges {
   position: absolute; left: 0; top: 0;
@@ -775,7 +780,7 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
 /* ---------- 节点 ---------- */
 .cv-node {
   position: absolute;
-  min-width: 160px;
+  min-width: 190px;
   background: var(--panel);
   border: 1px solid var(--line-strong);
   border-radius: 12px;
@@ -796,8 +801,8 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
   cursor: grab;
 }
 .cv-tag {
-  font-size: 9.5px; font-weight: 700; letter-spacing: .6px;
-  padding: 1px 6px; border-radius: 5px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .5px;
+  padding: 2px 7px; border-radius: 5px;
   background: var(--panel-3); color: var(--text-2);
   white-space: nowrap;
 }
@@ -805,7 +810,7 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
 .cv-node.node-prompt .cv-tag { background: var(--accent-soft); color: var(--accent-text); }
 .cv-title {
   flex: 1; min-width: 0;
-  font-size: 11.5px; color: var(--text);
+  font-size: 12.5px; color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .cv-head-ops { display: flex; gap: 2px; }
@@ -820,65 +825,65 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
 .cv-img { display: block; width: 100%; height: auto; border-radius: 0 0 12px 12px; }
 .cv-drop {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 7px; padding: 30px 14px;
-  color: var(--text-3); font-size: 11.5px; text-align: center;
+  gap: 7px; padding: 32px 14px;
+  color: var(--text-3); font-size: 12.5px; text-align: center;
   border-bottom: 1px dashed var(--line);
 }
 
 .cv-role { display: flex; gap: 4px; padding: 7px 10px 0; }
 .cv-role-btn {
   border: 1px solid var(--line-strong); background: transparent;
-  color: var(--text-2); font-size: 10.5px;
-  padding: 2px 9px; border-radius: 99px; cursor: pointer;
+  color: var(--text-2); font-size: 11.5px;
+  padding: 3px 11px; border-radius: 99px; cursor: pointer;
 }
 .cv-role-btn.on { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
 
 .cv-text {
   display: block; width: 100%;
-  min-height: 92px; max-height: 240px;
+  min-height: 108px; max-height: 300px;
   border: none; background: transparent;
-  padding: 8px 11px 11px;
-  font-family: var(--mono); font-size: 11.5px; line-height: 1.6;
+  padding: 9px 12px 12px;
+  font-family: var(--mono); font-size: 13px; line-height: 1.65;
   color: var(--text); resize: vertical; outline: none;
 }
 
 .cv-gen-body { border-bottom: 1px solid var(--line); }
 .cv-gen-meta {
   display: flex; gap: 8px; justify-content: space-between;
-  padding: 7px 10px;
-  font-size: 10.5px; color: var(--text-3);
+  padding: 8px 11px;
+  font-size: 11.5px; color: var(--text-3);
   font-family: var(--mono);
   cursor: pointer;
 }
 .cv-gen-meta:hover { color: var(--text); }
 .cv-gen-meta span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cv-gen-status {
-  padding: 0 10px 7px;
-  font-size: 10.5px; color: var(--text-2);
+  padding: 0 11px 8px;
+  font-size: 11.5px; color: var(--text-2);
 }
 .cv-gen-status.error { color: var(--danger); }
 .cv-gen-status.done { color: var(--ok); }
 .cv-run {
   display: block; width: calc(100% - 16px);
-  margin: 2px 8px 9px;
-  height: 30px;
+  margin: 2px 8px 10px;
+  height: 33px;
   border: none; border-radius: 8px;
   background: var(--accent); color: var(--accent-fg);
-  font-size: 12px; font-weight: 600; cursor: pointer;
+  font-size: 12.5px; font-weight: 600; cursor: pointer;
 }
 .cv-run:hover { background: var(--accent-2); }
 .cv-run:disabled { opacity: .55; cursor: default; }
 
 .cv-wf { padding: 9px 10px; }
 .cv-wf-cls {
-  font-family: var(--mono); font-size: 11px; color: var(--text-2);
-  margin-bottom: 5px; word-break: break-all;
+  font-family: var(--mono); font-size: 12px; color: var(--text-2);
+  margin-bottom: 6px; word-break: break-all;
 }
 .cv-wf-w div {
-  font-family: var(--mono); font-size: 10.5px; color: var(--text-3);
-  line-height: 1.55; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-3);
+  line-height: 1.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.cv-wf-io { margin-top: 6px; font-size: 10px; color: var(--text-3); }
+.cv-wf-io { margin-top: 7px; font-size: 11px; color: var(--text-3); }
 
 /* ---------- 端口 ---------- */
 .cv-port {
@@ -917,9 +922,12 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
 .cv-tool svg { flex: 0 0 auto; }
 .cv-hud-sep { width: 1px; height: 20px; background: var(--line-strong); margin: 0 3px; }
 .cv-zoom {
-  font-family: var(--mono); font-size: 11px; color: var(--text-3);
-  min-width: 40px; text-align: center;
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-2);
+  min-width: 46px; text-align: center;
+  border: none; background: transparent; cursor: pointer;
+  border-radius: 7px; height: 28px;
 }
+.cv-zoom:hover { background: var(--panel-3); color: var(--text); }
 .cv-hint {
   position: absolute; right: 18px; bottom: 20px;
   font-size: 11px; color: var(--text-3);
@@ -1515,3 +1523,7 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
   color: var(--rose-ink);
   background: var(--rose-soft);
 }
+
+/* 画布 HUD 的退出按钮 */
+.cv-exit { font-weight: 600; }
+.cv-exit:hover { background: var(--rose-soft); color: var(--rose-ink); }
