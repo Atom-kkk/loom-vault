@@ -1,0 +1,11 @@
+.DS_Store
+__pycache__/
+*.pyc
+*.log
+
+# 参考库缩略图（约 42 MB，2906 张）
+# 元数据 reference/*.json 与 reference/data.js 已入库，
+# 克隆后跑 `python3 scripts/fetch_reference.py` 即可拉回来
+reference/outfits/
+reference/faces/
+reference/_failed.txt
