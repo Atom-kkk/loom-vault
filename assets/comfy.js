@@ -576,6 +576,126 @@ window.Comfy = (function () {
     };
   }
 
+  /* ---------------- 参数可编辑 ---------------- */
+  /**
+   * 一个 UI 节点的 widgets_values 分别对应哪些输入名（顺序与 uiToApi 的取值顺序严格一致）
+   * slots[i]：第 i 个参数在 widgets_values 里的真实下标（seed 后面常跟一个 fixed/randomize 控制位，
+   *           所以 keys 的下标不能直接当 widgets_values 的下标用）
+   * linked：这个输入已经被连线占用（不能手改）
+   */
+  function widgetKeysOf(node, objectInfo) {
+    if (!node || !objectInfo) return null;
+    const def = objectInfo[node.type];
+    if (!def) return null;
+    const specs = { ...(def.input?.required || {}), ...(def.input?.optional || {}) };
+    const values = Array.isArray(node.widgets_values)
+      ? node.widgets_values
+      : Object.values(node.widgets_values || {});
+    const linked = {};
+    (node.inputs || []).forEach(i => { if (i && i.name && i.link != null) linked[i.name] = true; });
+    const keys = [], slots = [];
+    let wi = 0;
+    for (const [name, spec] of Object.entries(specs)) {
+      const type = Array.isArray(spec) ? spec[0] : spec;
+      const opts = (Array.isArray(spec) ? spec[1] : null) || {};
+      if (opts.forceInput) continue;
+      if (!isWidgetType(type)) continue;
+      if (wi < values.length) {
+        keys.push(name);
+        slots.push(wi);
+        wi++;
+        if (typeof values[wi] === 'string' && CONTROL_WORDS.has(values[wi])) wi++;
+      }
+    }
+    return { keys, slots, linked };
+  }
+
+  /* ---------------- 内置模板（简易节点用） ---------------- */
+  function optsOf(objectInfo, cls, key) {
+    const spec = objectInfo?.[cls]?.input?.required?.[key] || objectInfo?.[cls]?.input?.optional?.[key];
+    if (!Array.isArray(spec)) return null;
+    return Array.isArray(spec[0]) ? spec[0] : null;
+  }
+
+  /** 从 /object_info 里扒出各种可选列表（模型、采样器…） */
+  function modelLists(objectInfo) {
+    return {
+      ckpt: optsOf(objectInfo, 'CheckpointLoaderSimple', 'ckpt_name') || [],
+      unet: optsOf(objectInfo, 'UNETLoader', 'unet_name') || [],
+      clipType: optsOf(objectInfo, 'CLIPLoader', 'type') || [],
+      vae: optsOf(objectInfo, 'VAELoader', 'vae_name') || [],
+      lora: optsOf(objectInfo, 'LoraLoader', 'lora_name') || [],
+      sampler: optsOf(objectInfo, 'KSampler', 'sampler_name') || [],
+      scheduler: optsOf(objectInfo, 'KSampler', 'scheduler') || []
+    };
+  }
+
+  const TEMPLATES = [
+    { id: 'txt2img', name: '文生图 · 一体模型', desc: '一个模型文件搞定（CheckpointLoaderSimple），最通用', need: 'ckpt', slots: 0 },
+    { id: 'txt2img_split', name: '文生图 · 分离模型', desc: 'UNET + CLIP + VAE 分开加载，Flux / Krea 这类新模型用这个', need: 'split', slots: 0 },
+    { id: 'img2img', name: '图生图 · 一张参考图', desc: '拿一张参考图当底子重画，可调重绘幅度', need: 'ckpt', slots: 1 },
+    { id: 'txt2img_lora', name: '文生图 · 挂一个 LoRA', desc: '一体模型 + LoRA，适合固定画风', need: 'ckpt+lora', slots: 0 }
+  ];
+
+  /**
+   * 现搭一套可提交的 API 工作流
+   * @param {string} id  模板 id
+   * @param {object} o   {model, unet, clip, vae, clipType, lora, width, height, steps, cfg, sampler, scheduler, denoise}
+   */
+  function buildTemplate(id, o = {}) {
+    const w = Number(o.width) || 1024, h = Number(o.height) || 1024;
+    const steps = Number(o.steps) || 20, cfg = Number(o.cfg) || 7;
+    const sampler = o.sampler || 'euler', scheduler = o.scheduler || 'normal';
+    const denoise = Number(o.denoise != null ? o.denoise : 1);
+    const seed = Math.floor(Math.random() * 0xffffffffffff);
+    const P = '<PROMPT>', N = '<NEGATIVE>';
+
+    if (id === 'txt2img_split') {
+      return {
+        name: `文生图·分离 ${o.unet || '未选模型'}`,
+        api: {
+          '1': { class_type: 'UNETLoader', inputs: { unet_name: o.unet || '', weight_dtype: 'default' } },
+          '2': { class_type: 'CLIPLoader', inputs: { type: o.clipType || 'stable_diffusion' } },
+          '3': { class_type: 'VAELoader', inputs: { vae_name: o.vae || '' } },
+          '5': { class_type: 'EmptyLatentImage', inputs: { width: w, height: h, batch_size: 1 } },
+          '6': { class_type: 'CLIPTextEncode', inputs: { text: P, clip: ['2', 0] } },
+          '7': { class_type: 'CLIPTextEncode', inputs: { text: N, clip: ['2', 0] } },
+          '8': { class_type: 'KSampler', inputs: { seed, steps, cfg, sampler_name: sampler, scheduler, denoise, model: ['1', 0], positive: ['6', 0], negative: ['7', 0], latent_image: ['5', 0] } },
+          '9': { class_type: 'VAEDecode', inputs: { samples: ['8', 0], vae: ['3', 0] } },
+          '10': { class_type: 'SaveImage', inputs: { filename_prefix: 'Loom', images: ['9', 0] } }
+        }
+      };
+    }
+
+    const enc = (latentRef, den) => ({
+      '4': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: o.model || '' } },
+      '5': { class_type: 'EmptyLatentImage', inputs: { width: w, height: h, batch_size: 1 } },
+      '6': { class_type: 'CLIPTextEncode', inputs: { text: P, clip: ['4', 1] } },
+      '7': { class_type: 'CLIPTextEncode', inputs: { text: N, clip: ['4', 1] } },
+      '3': { class_type: 'KSampler', inputs: { seed, steps, cfg, sampler_name: sampler, scheduler, denoise: den, model: ['4', 0], positive: ['6', 0], negative: ['7', 0], latent_image: latentRef } },
+      '8': { class_type: 'VAEDecode', inputs: { samples: ['3', 0], vae: ['4', 2] } },
+      '9': { class_type: 'SaveImage', inputs: { filename_prefix: 'Loom', images: ['8', 0] } }
+    });
+
+    if (id === 'img2img') {
+      const api = enc(['11', 0], denoise);
+      api['10'] = { class_type: 'LoadImage', inputs: { image: 'vault_ref.png' } };
+      api['11'] = { class_type: 'VAEEncode', inputs: { pixels: ['10', 0], vae: ['4', 2] } };
+      return { name: `图生图 ${o.model || '未选模型'}`, api };
+    }
+
+    if (id === 'txt2img_lora') {
+      const api = enc(['5', 0], 1);
+      api['12'] = { class_type: 'LoraLoader', inputs: { model: ['4', 0], clip: ['4', 1], lora_name: o.lora || '', strength_model: 0.8, strength_clip: 1 } };
+      api['3'].inputs.model = ['12', 0];
+      api['6'].inputs.clip = ['12', 1];
+      api['7'].inputs.clip = ['12', 1];
+      return { name: `文生图·LoRA ${o.lora || '未选LoRA'}`, api };
+    }
+
+    return { name: `文生图 ${o.model || '未选模型'}`, api: enc(['5', 0], 1) };
+  }
+
   function refId(ref) {
     if (Array.isArray(ref)) return String(ref[0]);
     if (typeof ref === 'string') return ref;
@@ -620,9 +740,10 @@ window.Comfy = (function () {
 
   return {
     load, save, cfg: () => cfg, base,
-    ping, objectInfo, objectInfoCached, queueInfo, uiToApi,
+    ping, objectInfo, objectInfoCached, queueInfo, uiToApi, widgetKeysOf,
     uploadImage, queue, history, fetchImage, run,
     openWs, closeWs, wsConnected: () => !!ws && ws.readyState === 1,
-    analyzeApi, applyInputs, extractImages
+    analyzeApi, applyInputs, extractImages,
+    modelLists, buildTemplate, TEMPLATES
   };
 })();

@@ -125,7 +125,7 @@ window.Canvas = (function () {
   async function ensureUrls() {
     let changed = false;
     for (const n of (cv?.nodes || [])) {
-      if (n.type !== 'image' && n.type !== 'ref') continue;
+      if (n.type !== 'image' && n.type !== 'ref' && n.type !== 'simple') continue;
       const bid = blobIdOf(n);
       if (!bid) continue;
       const u = await urlForBlob(bid);
@@ -286,6 +286,10 @@ window.Canvas = (function () {
     upload: false,
     actions: () => `
       <button class="btn" data-cv="import-wf">${V.icon('flow', 14)} 导入工作流</button>
+      <button class="btn" data-cv="pack">${V.icon('layers', 14)} 简易节点包</button>
+      ${cv && (cv.compact || cv.nodes.some(n => n.type === 'simple'))
+    ? `<button class="btn" data-cv="compact">${V.icon('flow', 14)} ${cv.compact ? '完整节点图' : '只看简易节点'}</button>`
+    : ''}
       <button class="btn" data-cv="list">${V.icon('layers', 14)} 画布</button>
       <button class="btn primary" data-cv="add-gen">${V.icon('plus', 14)} 生成节点</button>`,
     render: async (c) => {
@@ -341,6 +345,25 @@ window.Canvas = (function () {
   /* ============================================================
      渲染
      ============================================================ */
+  /** 简易模式：只显示简易节点和素材节点，工作流节点图与完整生成节点收起来 */
+  function visibleNode(n) {
+    if (!cv || !cv.compact) return true;
+    return n.type !== 'wf' && n.type !== 'gen';
+  }
+
+  /** 顶栏的「完整节点图 / 只看简易节点」按钮（视图渲染后才可能不存在，需要时补一个） */
+  function syncCompactBtn() {
+    const bar = document.querySelector('#topbar-actions');
+    if (!bar || !cv) return;
+    const want = !!(cv.compact || cv.nodes.some(n => n.type === 'simple'));
+    const btn = bar.querySelector('[data-cv="compact"]');
+    if (!want) { btn?.remove(); return; }
+    const label = cv.compact ? '完整节点图' : '只看简易节点';
+    if (btn) btn.innerHTML = V.icon('flow', 14) + ' ' + label;
+    else bar.insertAdjacentHTML('beforeend',
+      `<button class="btn" data-cv="compact">${V.icon('flow', 14)} ${label}</button>`);
+  }
+
   function renderAll() {
     if (!cv || !world) return;
     world.style.transform = `translate(${cv.view.x}px, ${cv.view.y}px) scale(${cv.view.k})`;
@@ -348,11 +371,16 @@ window.Canvas = (function () {
     if (zoomEl) zoomEl.textContent = Math.round(cv.view.k * 100) + '%';
 
     world.querySelectorAll('.cv-node').forEach(n => n.remove());
-    cv.nodes.forEach(n => world.appendChild(makeNodeEl(n)));
+    cv.nodes.filter(visibleNode).forEach(n => world.appendChild(makeNodeEl(n)));
     renderEdges();
 
     const sub = document.querySelector('#view-sub');
-    if (sub) sub.textContent = `${cv.name} · ${cv.nodes.length} 个节点`;
+    if (sub) {
+      const vis = cv.nodes.filter(visibleNode).length;
+      sub.textContent = cv.compact
+        ? `${cv.name} · 简易模式（${vis} 个卡片 / 共 ${cv.nodes.length}）`
+        : `${cv.name} · ${cv.nodes.length} 个节点`;
+    }
   }
 
   function makeNodeEl(n) {
@@ -371,8 +399,11 @@ window.Canvas = (function () {
         <span class="cv-title">${esc(nodeTitle(n))}</span>
         <div class="cv-head-ops">
           ${n.type === 'gen' ? `<button class="cv-mini" data-cvnode="run" title="生成">${V.icon('spark', 13)}</button>` : ''}
+          ${n.type === 'gen' ? `<button class="cv-mini" data-cvnode="simplify" title="打包成简易节点">${V.icon('layers', 13)}</button>` : ''}
+          ${n.type === 'simple' ? `<button class="cv-mini" data-cvnode="expand" title="还原成完整生成节点">${V.icon('flow', 13)}</button>` : ''}
+          ${n.type === 'wf' && wfSrc()?.json ? `<button class="cv-mini ${n.data.mode === 4 ? 'on' : ''}" data-cvnode="bypass" title="${n.data.mode === 4 ? '取消旁路' : '旁路（临时跳过这个节点）'}">${V.icon('flow', 13)}</button>` : ''}
           ${n.type === 'image' || n.type === 'ref' ? `<button class="cv-mini" data-cvnode="replace" title="换图">${V.icon('upload', 13)}</button>` : ''}
-          <button class="cv-mini" data-cvnode="del" title="删除">${V.icon('close', 13)}</button>
+          <button class="cv-mini" data-cvnode="del" title="${n.type === 'wf' ? '从工作流里删除这个节点' : '删除'}">${V.icon('close', 13)}</button>
         </div>
       </div>`;
 
@@ -413,12 +444,55 @@ window.Canvas = (function () {
         <button class="cv-run" data-cvnode="run" ${st === 'running' ? 'disabled' : ''}>
           ${st === 'running' ? '<span class="spinner"></span> 生成中' : '生成'}
         </button>`;
+    } else if (n.type === 'simple') {
+      const st = n.data.status || 'idle';
+      const slots = n.data.imageSlots || 0;
+      const pct = n.data.prog ? Math.min(100, Math.max(2, Math.round(n.data.prog.step / Math.max(1, n.data.prog.total) * 100))) : 0;
+      body = `
+        <textarea class="cv-text" data-cvtext placeholder="写提示词…（想要什么）">${esc(n.data.text || '')}</textarea>
+        <textarea class="cv-text sm" data-cvneg placeholder="负向提示词 · 不想要什么（可留空）">${esc(n.data.neg || '')}</textarea>
+        <div class="cv-simple-ref" data-cvnode="pick" title="点一下放参考图">
+          ${n.data.src
+    ? `<img class="cv-img sm" src="${esc(n.data.src)}" alt="">`
+    : `<div class="cv-drop sm">${V.icon('img', 20)}<span>${slots ? '放参考图（可留空）' : '这套工作流没有图位'}</span></div>`}
+        </div>
+        ${n.data.status === 'done' && n.data.resultSrc ? `<img class="cv-img" src="${esc(n.data.resultSrc)}" alt="">` : ''}
+        <div class="cv-gen-meta" title="点这里换工作流">
+          <span>${esc(n.data.wfName || '未绑定工作流')}</span>
+          <span>${slots ? slots + ' 个图位' : '纯文生图'}</span>
+        </div>
+        ${st === 'running' && n.data.prog ? `<div class="cv-prog"><i style="width:${pct}%"></i></div>` : ''}
+        ${n.data.statusText ? `<div class="cv-gen-status ${st}">${esc(n.data.statusText)}</div>` : ''}
+        <button class="cv-run" data-cvnode="run" ${st === 'running' ? 'disabled' : ''}>
+          ${st === 'running' ? '<span class="spinner"></span> 生成中' : '生成'}
+        </button>`;
     } else if (n.type === 'wf') {
-      body = `<div class="cv-wf">
+      const keys = n.data.keys;
+      const vals = n.data.widgets || [];
+      const off = n.data.mode === 4;
+      body = `<div class="cv-wf${off ? ' bypassed' : ''}">
           ${n.data.title !== n.data.cls ? `<div class="cv-wf-cls">${esc(n.data.cls || '')}</div>` : ''}
-          ${n.data.widgets?.length ? `<div class="cv-wf-w">${n.data.widgets.slice(0, 8).map(w =>
-            `<div><b>${esc(String(w).slice(0, 60))}</b></div>`).join('')}</div>` : ''}
-          ${n.data.outputs?.length ? `<div class="cv-wf-io">出 ${n.data.outputs.length} · 入 ${n.data.inputs?.length || 0}</div>` : ''}
+          ${keys && keys.length
+    ? `<div class="cv-wf-rows">${keys.map((k, i) => {
+      const vi = (n.data.slots && n.data.slots[i] != null) ? n.data.slots[i] : i;
+      const v = vals[vi];
+      const isLink = !!(n.data.linked && n.data.linked[k]);
+      const long = typeof v === 'string' && v.length > 24;
+      const num = typeof v === 'number';
+      return `<label class="cv-wf-row">
+                <span>${esc(k)}</span>
+                ${isLink
+        ? `<i class="cv-wf-linked">由连线提供</i>`
+        : long
+          ? `<textarea rows="2" data-cvw="${i}">${esc(String(v ?? ''))}</textarea>`
+          : `<input type="${num ? 'number' : 'text'}" data-cvw="${i}" value="${esc(String(v ?? ''))}">`}
+              </label>`;
+    }).join('')}</div>`
+    : (vals.length ? `<div class="cv-wf-w">${vals.slice(0, 8).map(w =>
+      `<div><b>${esc(String(w).slice(0, 60))}</b></div>`).join('')}</div>` : '')}
+          ${n.data.outputs?.length || off
+    ? `<div class="cv-wf-io">出 ${n.data.outputs?.length || 0} · 入 ${n.data.inputs?.length || 0}${off ? ' · <b>已旁路</b>' : ''}</div>`
+    : ''}
         </div>`;
     }
 
@@ -431,11 +505,12 @@ window.Canvas = (function () {
   }
 
   function typeLabel(t) {
-    return { prompt: '提示词', image: '图片', ref: '参考', gen: '生成', wf: '节点' }[t] || t;
+    return { prompt: '提示词', image: '图片', ref: '参考', gen: '生成', simple: '简易', wf: '节点' }[t] || t;
   }
 
   function nodeTitle(n) {
     if (n.type === 'prompt') return (n.data.text || '').slice(0, 14) || '空提示词';
+    if (n.type === 'simple') return n.data.wfName || '简易节点';
     if (n.type === 'gen') return n.data.wfName || (n.data.workflowId ? '生成' : '未绑定工作流');
     if (n.type === 'wf') return n.data.title || n.data.cls || '节点';
     return n.data.label || (n.type === 'ref' ? '参考图' : '图片');
@@ -446,6 +521,7 @@ window.Canvas = (function () {
     const paths = cv.edges.map(e => {
       const a = nodeById(e.from), b = nodeById(e.to);
       if (!a || !b) return '';
+      if (cv.compact && (a.type === 'wf' || a.type === 'gen' || b.type === 'wf' || b.type === 'gen')) return '';
       const aEl = world.querySelector(`.cv-node[data-id="${a.id}"]`);
       const bEl = world.querySelector(`.cv-node[data-id="${b.id}"]`);
       const aw = a.w || aEl?.offsetWidth || 240;
@@ -492,9 +568,13 @@ window.Canvas = (function () {
       btn.addEventListener('click', e => {
         e.stopPropagation();
         const act = btn.dataset.cvnode;
-        if (act === 'del') removeNode(n.id);
+        if (act === 'del') { if (n.type === 'wf') deleteWfNode(n); else removeNode(n.id); }
         if (act === 'replace') pickImageFor(n);
         if (act === 'run') runGen(n);
+        if (act === 'bypass') toggleBypass(n);
+        if (act === 'simplify') toSimple(n);
+        if (act === 'expand') toGen(n);
+        if (act === 'pick' && n.type === 'simple') pickImageFor(n);
       });
     });
 
@@ -510,6 +590,34 @@ window.Canvas = (function () {
       ta.addEventListener('pointerdown', e => e.stopPropagation());
       ta.addEventListener('wheel', e => e.stopPropagation());
     }
+
+    // 工作流节点的参数：改完写回源工作流并重新生成 API
+    el.querySelectorAll('[data-cvw]').forEach(inp => {
+      const i = Number(inp.dataset.cvw);
+      const commit = () => {
+        const raw = inp.value;
+        // slots[i] 才是这个参数在 widgets_values 里的真实位置（seed 后可能夹着 fixed 控制位）
+        const vi = (n.data.slots && n.data.slots[i] != null) ? n.data.slots[i] : i;
+        const old = n.data.widgets?.[vi];
+        n.data.widgets = n.data.widgets || [];
+        n.data.widgets[vi] = (typeof old === 'number' && raw !== '') ? Number(raw) : raw;
+        syncWfNode(n);
+      };
+      inp.addEventListener('change', commit);
+      inp.addEventListener('blur', commit);
+      inp.addEventListener('pointerdown', e => e.stopPropagation());
+      inp.addEventListener('wheel', e => e.stopPropagation());
+      inp.addEventListener('keydown', e => {
+        e.stopPropagation();
+        if (e.key === 'Enter' && inp.tagName === 'INPUT') commit();
+      });
+    });
+
+    el.querySelectorAll('[data-cvneg]').forEach(ta => {
+      ta.addEventListener('input', () => { n.data.neg = ta.value; queueSave(); });
+      ta.addEventListener('pointerdown', e => e.stopPropagation());
+      ta.addEventListener('wheel', e => e.stopPropagation());
+    });
 
     el.querySelectorAll('[data-role]').forEach(b => {
       b.addEventListener('click', e => {
@@ -739,6 +847,7 @@ window.Canvas = (function () {
       image: { w: 260, data: { src: '', label: '图片' } },
       ref: { w: 220, data: { src: '', label: '参考图' } },
       gen: { w: 320, data: { wfName: '', model: '', status: 'idle', statusText: '' } },
+      simple: { w: 300, data: { wfName: '', text: '', neg: '', src: '', imageSlots: 0, status: 'idle', statusText: '' } },
       wf: { w: 240, data: {} }
     }[type];
     const n = { ...base, ...defaults, ...extra, data: { ...defaults.data, ...(extra.data || {}) } };
@@ -861,10 +970,18 @@ window.Canvas = (function () {
     if (n.data.status === 'running') return;
     const inputs = incoming(n);
     const prompts = inputs.filter(x => x.type === 'prompt');
-    const refs = inputs.filter(x => x.type === 'ref' || x.type === 'image');
+    let refs = inputs.filter(x => x.type === 'ref' || x.type === 'image');
 
-    const positive = prompts.find(p => p.data.role !== '负向')?.data.text || '';
-    const negative = prompts.find(p => p.data.role === '负向')?.data.text || '';
+    // 简易节点：提示词和参考图就写在自己身上
+    let positive, negative;
+    if (n.type === 'simple') {
+      positive = n.data.text || '';
+      negative = n.data.neg || '';
+      if (n.data.src || n.data.blobId) refs = [n, ...refs];
+    } else {
+      positive = prompts.find(p => p.data.role !== '负向')?.data.text || '';
+      negative = prompts.find(p => p.data.role === '负向')?.data.text || '';
+    }
 
     // 工作流
     const wfId = n.data.workflowId;
@@ -1123,13 +1240,29 @@ window.Canvas = (function () {
     inp.onchange = async () => {
       const f = inp.files[0];
       if (!f) return;
+      const name = f.name.replace(/\.json$/i, '');
       try {
         const text = await f.text();
         const json = JSON.parse(text);
-        const r = await buildFromWorkflow(json, f.name.replace(/\.json$/i, ''));
-        if (r.converted) V.toast(`已识别 ${r.count} 个节点，并自动转成 API 格式（可直接生成）`, 'ok');
-        else if (r.convertError) V.toast(`已识别 ${r.count} 个节点；转 API 失败：${r.convertError}`, 'err');
-        else if (r.count) V.toast(`已识别 ${r.count} 个节点`, 'ok');
+        const r = await buildFromWorkflow(json, name);
+
+        // 导入 = 打包成简易节点：能跑就只留一个简易节点，完整节点图收起来
+        if (r.bindWfId) {
+          cv.compact = true;
+          addSimpleNode(r.bindWfId, { pos: { x: 90, y: 100 } });
+          await packAdd(r.bindWfId, name);
+          syncCompactBtn();
+          renderAll();
+          await persist();
+          await fitView();
+          V.toast(`已打包成简易节点：${name}（完整节点图收起来了，顶栏「完整节点图」可展开改参数）`, 'ok');
+        } else if (r.convertError) {
+          cv.compact = false;
+          renderAll();
+          V.toast(`已铺出 ${r.count} 个节点，但转 API 失败：${r.convertError}`, 'err');
+        } else if (r.count) {
+          V.toast(`已识别 ${r.count} 个节点`, 'ok');
+        }
       } catch (e) {
         V.toast('导入失败：' + e.message, 'err');
       }
@@ -1159,11 +1292,18 @@ window.Canvas = (function () {
     let bindWf = baseWf;
     let convertError = '';
     let stats = null;
+    let layout = null;   // 每个节点的 widgets_values 分别对应哪些输入名
 
     if (isUI) {
       V.toast('正在读取 ComfyUI 节点定义…');
       try {
         const info = await Comfy.objectInfoCached();
+        layout = {};
+        json.nodes.forEach(nd => {
+          if (!nd || nd.id == null) return;
+          const l = Comfy.widgetKeysOf(nd, info);
+          if (l) layout[nd.id] = l;
+        });
         const r = Comfy.uiToApi(json, info);
         stats = r.stats;
         const apiWf = {
@@ -1207,6 +1347,10 @@ window.Canvas = (function () {
             cls: nd.type || 'Node',
             title: nd.title || nd.type || '节点',
             widgets: Array.isArray(nd.widgets_values) ? nd.widgets_values.map(v => typeof v === 'object' ? JSON.stringify(v) : v) : [],
+            keys: layout?.[nd.id]?.keys || null,
+            slots: layout?.[nd.id]?.slots || null,
+            linked: layout?.[nd.id]?.linked || null,
+            mode: nd.mode ?? 0,
             inputs: nd.inputs || [],
             outputs: nd.outputs || [],
             rawId: nd.id
@@ -1242,6 +1386,7 @@ window.Canvas = (function () {
       ids.forEach(id => {
         const d = depth[id] ?? 0;
         cols[d] = cols[d] || 0;
+        const entries = Object.entries(json[id].inputs || {}).filter(([, v]) => !Array.isArray(v));
         const n = {
           id: U.uid('n'),
           type: 'wf',
@@ -1251,9 +1396,11 @@ window.Canvas = (function () {
           data: {
             cls: json[id].class_type,
             title: json[id].class_type,
-            widgets: Object.entries(json[id].inputs || {})
-              .filter(([, v]) => !Array.isArray(v))
-              .map(([k, v]) => `${k}: ${v}`),
+            widgets: entries.map(([, v]) => v),
+            keys: entries.map(([k]) => k),
+            slots: entries.map((_, i) => i),
+            linked: null,
+            mode: 0,
             inputs: Object.keys(json[id].inputs || {}),
             outputs: [],
             apiId: id
@@ -1282,6 +1429,12 @@ window.Canvas = (function () {
     cv.edges = edges;
     cv.name = name || '导入的工作流';
     cv.view = { x: 40, y: 40, k: 0.7 };
+    // 记下工作流源：UI 格式留着原始 JSON，改节点后能重新转 API
+    cv.wfSrc = {
+      uiWfId: baseWf.id,
+      apiWfId: bindWf !== baseWf ? bindWf.id : '',
+      json: isUI ? json : null
+    };
 
     // 能提交就放一个已绑定的生成节点
     const apiJson = isApi ? json : (bindWf !== baseWf ? JSON.parse(bindWf.content) : null);
@@ -1305,7 +1458,187 @@ window.Canvas = (function () {
     renderAll();
     await persist();
     fitView();
-    return { count: nodes.length, converted: bindWf !== baseWf, convertError, stats };
+    return {
+      count: nodes.length,
+      converted: bindWf !== baseWf,
+      convertError,
+      stats,
+      // 能直接跑的那套（API 格式）的 id —— 用它打包简易节点
+      bindWfId: bindWf && (isApi || bindWf !== baseWf) ? bindWf.id : ''
+    };
+  }
+
+  /* ============================================================
+     工作流节点编辑 → 回写（改参数 / 旁路 / 删节点）
+     ============================================================ */
+  const wfSrc = () => (cv && cv.wfSrc) || null;
+
+  /** 把画布上某个 wf 节点的改动写回源工作流，并重新生成可提交的 API 版 */
+  async function syncWfNode(n, opts = {}) {
+    const src = wfSrc();
+
+    // UI 格式：改原始 JSON → 重新转 API（旁路、删节点这类结构改动也走这条路）
+    if (src && src.json) {
+      const jn = (src.json.nodes || []).find(x => String(x.id) === String(n.data.rawId));
+      if (jn) {
+        if (n.data.widgets) jn.widgets_values = [...n.data.widgets];
+        if (n.data.mode != null) jn.mode = n.data.mode;
+      }
+      return regenerateApi(opts);
+    }
+
+    // API 格式：直接改对应输入
+    if (!src || !src.apiWfId) {
+      if (!opts.silent) V.toast('这个画布不是从工作流导入的，改了也没地方同步', 'err');
+      return false;
+    }
+    const wf = V.state.workflows.find(w => w.id === src.apiWfId);
+    if (!wf) return false;
+    const api = JSON.parse(wf.content || '{}');
+    const id = String(n.data.apiId);
+    if (api[id]) {
+      (n.data.keys || []).forEach((k, i) => { api[id].inputs[k] = n.data.widgets[i]; });
+      wf.content = JSON.stringify(api);
+      await DB.put('workflows', wf);
+      await refreshBoundMeta(wf.id, api);
+      await V.reload();
+      queueSave();
+      return true;
+    }
+    return false;
+  }
+
+  /** 用画布上记的 UI 源重新转一次 API 工作流 */
+  async function regenerateApi(opts = {}) {
+    const src = wfSrc();
+    if (!src || !src.json) return false;
+    let info;
+    try { info = await Comfy.objectInfoCached(); }
+    catch (e) {
+      if (!opts.silent) V.toast('改了，但同步不到 API 版：' + e.message, 'err');
+      return false;
+    }
+    let r;
+    try { r = Comfy.uiToApi(src.json, info); }
+    catch (e) {
+      if (!opts.silent) V.toast('重新转换失败：' + e.message, 'err');
+      return false;
+    }
+
+    let wf = src.apiWfId && V.state.workflows.find(w => w.id === src.apiWfId);
+    if (!wf) {
+      wf = {
+        id: U.uid('wf'), name: (cv.name || '画布') + ' · API', modelId: '',
+        format: 'api-json', filename: 'canvas-api.json',
+        size: JSON.stringify(r.api).length, nodes: Object.keys(r.api).length,
+        content: JSON.stringify(r.api), note: '由画布上的节点改动自动生成',
+        createdAt: Date.now()
+      };
+      src.apiWfId = wf.id;
+      await DB.put('workflows', wf);
+      cv.nodes.forEach(x => {
+        if ((x.type === 'gen' || x.type === 'simple') && !x.data.workflowId) {
+          x.data.workflowId = wf.id;
+          x.data.wfName = wf.name;
+        }
+      });
+    } else {
+      wf.content = JSON.stringify(r.api);
+      await DB.put('workflows', wf);
+    }
+
+    await V.reload();
+    await refreshBoundMeta(wf.id, r.api);
+    renderAll();
+    queueSave();
+    return true;
+  }
+
+  /** 绑定了这套工作流的生成/简易节点，刷新模型名与图位数 */
+  async function refreshBoundMeta(wfId, api) {
+    const a = Comfy.analyzeApi(api);
+    (cv?.nodes || []).forEach(x => {
+      if ((x.type === 'gen' || x.type === 'simple') && x.data.workflowId === wfId) {
+        x.data.model = a.model || x.data.model || '';
+        x.data.imageSlots = a.imageIds.length;
+      }
+    });
+  }
+
+  async function toggleBypass(n) {
+    const src = wfSrc();
+    if (!src || !src.json) return V.toast('只有 UI 格式导入的工作流才能切换旁路', 'err');
+    pushHistory();
+    n.data.mode = n.data.mode === 4 ? 0 : 4;
+    const ok = await syncWfNode(n);
+    renderAll();
+    if (ok) V.toast(n.data.mode === 4 ? '已旁路：连线会绕开它（等于临时关掉 LoRA / 插件）' : '已恢复启用', 'ok');
+  }
+
+  async function deleteWfNode(n) {
+    const src = wfSrc();
+    if (src && src.json) {
+      const id = String(n.data.rawId);
+      pushHistory();
+      src.json.nodes = (src.json.nodes || []).filter(x => String(x.id) !== id);
+      src.json.links = (src.json.links || []).filter(l => {
+        const o = Array.isArray(l) ? String(l[1]) : String(l?.origin_id);
+        const t = Array.isArray(l) ? String(l[3]) : String(l?.target_id);
+        return o !== id && t !== id;
+      });
+      removeNode(n.id);
+      const ok = await regenerateApi();
+      if (ok) V.toast('已从这个工作流里删掉该节点，并重新生成 API 版', 'ok');
+      return;
+    }
+    removeNode(n.id);
+  }
+
+  /** 生成节点 ⇄ 简易节点 */
+  function toSimple(n) {
+    if (!n.data.workflowId) return V.toast('先给它绑定一个工作流', 'err');
+    pushHistory();
+    n.type = 'simple';
+    n.w = 300;
+    n.data.text = n.data.text || '';
+    n.data.neg = n.data.neg || '';
+    syncCompactBtn();
+    renderAll(); queueSave();
+    V.toast('已变成简易节点：只留提示词和参考图', 'ok');
+  }
+
+  function toGen(n) {
+    pushHistory();
+    n.type = 'gen';
+    n.w = 320;
+    syncCompactBtn();
+    renderAll(); queueSave();
+  }
+
+  /** 从一套工作流生成一个简易节点 */
+  function addSimpleNode(wfId, extra = {}) {
+    const wf = (V.state.workflows || []).find(w => w.id === wfId);
+    if (!wf) return V.toast('找不到这套工作流', 'err');
+    let slots = 0;
+    try {
+      const j = JSON.parse(wf.content || '{}');
+      if (!j.nodes) slots = Comfy.analyzeApi(j).imageIds.length;
+    } catch { }
+    const n = addNode('simple', {
+      pos: extra.pos || centerSpawn(),
+      w: 300,
+      data: {
+        workflowId: wf.id,
+        wfName: wf.name,
+        text: extra.text || '',
+        neg: '',
+        imageSlots: slots,
+        src: '',
+        status: 'idle',
+        statusText: ''
+      }
+    });
+    return n;
   }
 
   function toXY(v) {
@@ -1323,8 +1656,8 @@ window.Canvas = (function () {
     const els = [...world.querySelectorAll('.cv-node')];
     if (!els.length) return;
     let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
-    cv.nodes.forEach((n, i) => {
-      const el = els[i];
+    cv.nodes.filter(visibleNode).forEach(n => {
+      const el = world.querySelector(`.cv-node[data-id="${n.id}"]`);
       const w = n.w || el?.offsetWidth || 220;
       const h = el?.offsetHeight || 140;
       x1 = Math.min(x1, n.x); y1 = Math.min(y1, n.y);
@@ -1402,6 +1735,153 @@ window.Canvas = (function () {
   }
 
   /* ============================================================
+     简易节点包
+     ============================================================ */
+  async function packRead() {
+    const s = await DB.getSettings().catch(() => ({}));
+    return Array.isArray(s.simplePack) ? s.simplePack : [];
+  }
+  async function packWrite(arr) {
+    await DB.setSetting('simplePack', arr.slice(0, 60)).catch(() => { });
+  }
+  async function packAdd(wfId, name) {
+    const arr = (await packRead()).filter(x => x.wfId !== wfId);
+    arr.unshift({ wfId, name, at: Date.now() });
+    await packWrite(arr);
+  }
+  async function packRemove(wfId) {
+    await packWrite((await packRead()).filter(x => x.wfId !== wfId));
+  }
+
+  async function saveTplWorkflow(t) {
+    const wf = {
+      id: U.uid('wf'),
+      name: t.name,
+      modelId: '',
+      format: 'api-json',
+      filename: 'loom-template.json',
+      size: JSON.stringify(t.api).length,
+      nodes: Object.keys(t.api).length,
+      content: JSON.stringify(t.api),
+      note: 'Loom 内置模板 · 提示词留了占位符，用简易节点填',
+      createdAt: Date.now()
+    };
+    await DB.put('workflows', wf);
+    await V.reload();
+    return wf;
+  }
+
+  async function simplePackModal() {
+    let lists = null;
+    try { lists = Comfy.modelLists(await Comfy.objectInfoCached()); }
+    catch { V.toast('没连上 ComfyUI，模板里的模型只能手填文件名', 'err'); }
+
+    const pack = await packRead();
+    const wfs = V.state.workflows || [];
+
+    const field = (name, arr, cur, kind = 'text') => {
+      if (arr && arr.length) {
+        return `<label>${esc(name)} <select data-f="${kind}">${arr.map(m =>
+          `<option${m === cur ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select></label>`;
+      }
+      return `<label>${esc(name)} <input type="text" data-f="${kind}" placeholder="填文件名" value="${esc(cur || '')}"></label>`;
+    };
+
+    const tplCard = t => `
+      <div class="pk-card">
+        <b>${esc(t.name)}</b>
+        <p>${esc(t.desc)}</p>
+        <div class="pk-fields">
+          ${t.need === 'split'
+    ? field('模型(UNET)', lists?.unet, lists?.unet?.[0], 'unet') + field('VAE', lists?.vae, lists?.vae?.[0], 'vae')
+    : t.need === 'ckpt+lora'
+      ? field('底模', lists?.ckpt, lists?.ckpt?.[0], 'model') + field('LoRA', lists?.lora, lists?.lora?.[0], 'lora')
+      : field('底模', lists?.ckpt, lists?.ckpt?.[0], 'model')}
+          ${field('宽', null, '1024', 'width')}
+          ${field('高', null, '1024', 'height')}
+          ${field('步数', null, '20', 'steps')}
+        </div>
+        <button class="btn primary sm" data-tpladd="${t.id}">放上画布</button>
+      </div>`;
+
+    V.openModal({
+      title: '简易节点包',
+      sub: '挑一个放上画布：只留「提示词 + 参考图 + 生成」三样',
+      wide: true,
+      body: `
+        <div class="pk-sec">
+          <h3>内置模板</h3>
+          <p class="sub">${lists ? '模型列表直接来自你的 ComfyUI' : '没连上 ComfyUI：模型名要自己填（和 ComfyUI 里的文件名一致即可）'}</p>
+          <div class="pk-grid">${Comfy.TEMPLATES.map(tplCard).join('')}</div>
+        </div>
+        <div class="pk-sec">
+          <h3>已收录（${pack.length}）</h3>
+          <p class="sub">打包过的工作流都会留在这里，下次一键放上画布</p>
+          <div class="entity-list">
+            ${pack.map(p => `<div class="entity-row">
+                <div class="entity-main"><b>${esc(p.name || p.wfId)}</b></div>
+                <button class="btn sm primary" data-packadd="${esc(p.wfId)}">放上画布</button>
+                <button class="btn sm" data-packdel="${esc(p.wfId)}">移出</button>
+              </div>`).join('') || '<div class="empty">还没收录过，去下面「我的工作流」里打包一个</div>'}
+          </div>
+        </div>
+        <div class="pk-sec">
+          <h3>我的工作流</h3>
+          <p class="sub">把导入过的复杂工作流打包成简易节点（UI 格式需要先转成 API 才能跑）</p>
+          <div class="entity-list">
+            ${wfs.map(w => `<div class="entity-row">
+                <div class="entity-main">
+                  <b>${esc(w.name)}</b>
+                  <span>${w.format === 'api-json' ? 'API 格式 · 可以直接生成' : 'UI 格式 · 需要先转 API'}</span>
+                </div>
+                <button class="btn sm ${pack.some(p => p.wfId === w.id) ? '' : 'primary'}" data-wfpack="${esc(w.id)}">打包成简易节点</button>
+              </div>`).join('') || '<div class="empty">还没有工作流，先点顶部「导入工作流」</div>'}
+          </div>
+        </div>`,
+      footer: '<button class="btn" data-close>关闭</button>',
+      onMount: (box, close) => {
+        const val = (card, k) => {
+          const el = card.querySelector(`[data-f="${k}"]`);
+          if (!el) return '';
+          return el.value;
+        };
+
+        box.querySelectorAll('[data-tpladd]').forEach(b => b.onclick = async () => {
+          const card = b.closest('.pk-card');
+          const o = {};
+          ['model', 'unet', 'vae', 'lora', 'width', 'height', 'steps'].forEach(k => {
+            const v = val(card, k);
+            if (v) o[k] = v;
+          });
+          if (!o.model && !o.unet) return V.toast('先选一个模型', 'err');
+          const t = Comfy.buildTemplate(b.dataset.tpladd, o);
+          const wf = await saveTplWorkflow(t);
+          addSimpleNode(wf.id);
+          await packAdd(wf.id, wf.name);
+          close();
+          V.toast('已放上画布：' + wf.name, 'ok');
+        });
+
+        box.querySelectorAll('[data-wfpack], [data-packadd]').forEach(b => b.onclick = async () => {
+          const id = b.dataset.wfpack || b.dataset.packadd;
+          const wf = (V.state.workflows || []).find(w => w.id === id);
+          if (!wf) return V.toast('这套工作流已经不在库里了', 'err');
+          addSimpleNode(id);
+          await packAdd(id, wf.name);
+          close();
+          V.toast('已放上画布：' + wf.name, 'ok');
+        });
+
+        box.querySelectorAll('[data-packdel]').forEach(b => b.onclick = async () => {
+          await packRemove(b.dataset.packdel);
+          b.closest('.entity-row')?.remove();
+          V.toast('已移出节点包（工作流本身没删）', 'ok');
+        });
+      }
+    });
+  }
+
+  /* ============================================================
      全局动作
      ============================================================ */
   document.addEventListener('click', e => {
@@ -1426,6 +1906,14 @@ window.Canvas = (function () {
     if (a === 'redo') redo();
     if (a === 'import-wf') importWorkflow();
     if (a === 'list') canvasListModal();
+    if (a === 'pack') simplePackModal();
+    if (a === 'compact') {
+      cv.compact = !cv.compact;
+      syncCompactBtn();
+      renderAll();
+      queueSave();
+      V.toast(cv.compact ? '已收起节点图，只留简易节点' : '已展开完整节点图（可以在上面改参数、切旁路）', 'ok');
+    }
   });
 
   return {
