@@ -152,9 +152,48 @@ window.Comfy = (function () {
     return engineCall('/paths', { paths });
   }
 
+  /** 列出引擎 output 目录里的图（「从引擎导入」用） */
+  async function outputs(limit = 60) {
+    return engineCall('/outputs', { limit: limit });
+  }
+
+  /** 扫描本机可用的模型目录（后端按类型挑好，前端直接预填） */
+  async function scanModels() {
+    return engineCall('/scan-models', {});
+  }
+
+  /** 重启本地引擎（改完 extra_model_paths.yaml 后让配置生效） */
+  async function restartEngine() {
+    const r = await engineCall('/restart', {});
+    if (!r.ok) throw new Error(r.message || '重启失败');
+    return r;
+  }
+
   /** 列目录（前端路径选择器用） */
   async function listDir(path) {
     return engineCall('/listdir', { path: path || '~' });
+  }
+
+  /* ---------------- 一键安装 ComfyUI ---------------- */
+  // 下载源码 / 建环境 / 装 PyTorch 全在 serve.py 里跑，这里只负责发起和轮询进度。
+
+  async function installStart(opts) {
+    return engineCall('/install/start', opts || {});
+  }
+
+  async function installStatus() {
+    return engineCall('/install/status', {});
+  }
+
+  async function installCancel() {
+    return engineCall('/install/cancel', {});
+  }
+
+  /** 弹系统原生文件夹选择框（Windows 走 FolderBrowserDialog），用户取消返回空串 */
+  async function pickDir(initial, title) {
+    const r = await engineCall('/pick-dir', { initial: initial || '', title: title || '' });
+    if (r && r.error) throw new Error(r.error);
+    return (r && r.path) || '';
   }
 
   async function objectInfo() {
@@ -190,12 +229,76 @@ window.Comfy = (function () {
   /* ---------------- 提交 ---------------- */
   const clientId = 'vault_' + Math.random().toString(36).slice(2, 10);
 
-  async function queue(apiPrompt) {
-    const res = await req('/prompt', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: apiPrompt, client_id: clientId })
+  // seed < 0 视为「每次随机」：提交前替换成随机整数。
+  // （原来这件事靠 rgthree 的 Seed 节点，装插件的人才能用，现在引擎自己就能做）
+  function withFreshSeeds(apiPrompt) {
+    let copy;
+    try { copy = JSON.parse(JSON.stringify(apiPrompt)); } catch { return apiPrompt; }
+    for (const id of Object.keys(copy)) {
+      const inp = copy[id] && copy[id].inputs;
+      if (!inp) continue;
+      for (const k of ['seed', 'noise_seed']) {
+        if (typeof inp[k] === 'number' && inp[k] < 0) {
+          inp[k] = Math.floor(Math.random() * 1125899906842624);
+        }
+      }
+    }
+    return copy;
+  }
+
+  // ComfyUI 的校验错误是英文 JSON，翻成人话再抛给用户
+  function explainPromptError(msg) {
+    const m = String(msg || '');
+    const nodeM = m.match(/Node '([^']+)' not found/);
+    if (nodeM || /missing_node_type/.test(m)) {
+      return '这个工作流用到了第三方插件节点「' + (nodeM ? nodeM[1] : '未知') + '」，'
+        + '当前引擎没装，整个任务被拒。\n'
+        + '· 换成 Loom 自带的默认工作流（已改成原生 seed，不依赖插件）\n'
+        + '· 或把插件放进 ComfyUI/custom_nodes/ 后重启引擎';
+    }
+    if (/value_not_in_list|not in list/i.test(m)) {
+      const v = (m.match(/Value not in list:[^'"]*['"]([^'"]+)['"]/i) || [])[1] || '';
+      return '模型「' + (v || '某个文件') + '」不在 ComfyUI 的模型列表里。常见两种原因：\n'
+        + '· 还在下载（.qkdownloading / .part 这类临时文件不算数）\n'
+        + '· 模型目录没挂上 —— 打开「画布 → 高级选项」看有没有识别到';
+    }
+    if (/prompt_outputs_failed_validation/i.test(m)) {
+      return '工作流校验没通过：' + m.replace(/^.*?HTTP \d+\s*·\s*/, '').slice(0, 300);
+    }
+    return m;
+  }
+
+  // 兜底：把历史遗留的第三方「随机种子」节点（rgthree 等）拆掉，
+  // 因为引擎没装那个插件时整条 prompt 会被拒。种子改成字面量交给 withFreshSeeds 随机。
+  function stripPluginSeeds(apiPrompt) {
+    let api = apiPrompt;
+    const bad = Object.keys(api).filter(id => /rgthree|seed \(/i.test(String(api[id] && api[id].class_type)));
+    if (!bad.length) return api;
+    try { api = JSON.parse(JSON.stringify(apiPrompt)); } catch { return apiPrompt; }
+    Object.keys(api).forEach(id => {
+      const inp = api[id] && api[id].inputs;
+      if (!inp) return;
+      Object.keys(inp).forEach(k => {
+        const v = inp[k];
+        if (Array.isArray(v) && bad.indexOf(String(v[0])) >= 0) inp[k] = -1;
+      });
     });
+    bad.forEach(id => { delete api[id]; });
+    return api;
+  }
+
+  async function queue(apiPrompt) {
+    apiPrompt = stripPluginSeeds(apiPrompt);
+    let res;
+    try {
+      res = await req('/prompt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: apiPrompt, client_id: clientId })
+      });
+    } catch (e) {
+      throw new Error(explainPromptError(e && e.message ? e.message : e));
+    }
     const j = await res.json();
     if (j.error) throw new Error(j.error.message || JSON.stringify(j.error));
     if (j.node_errors && Object.keys(j.node_errors).length) {
@@ -203,6 +306,54 @@ window.Comfy = (function () {
       throw new Error('工作流校验失败：' + (first?.errors?.[0]?.message || JSON.stringify(first).slice(0, 200)));
     }
     return j.prompt_id;
+  }
+
+  /** 取消：中断正在执行的，并清空排队中还没开始的 */
+  async function cancelAll() {
+    const out = { interrupted: false, cleared: false };
+    const json = { headers: { 'Content-Type': 'application/json' } };
+    try {
+      await req('/interrupt', { method: 'POST', ...json, body: '{}' });
+      out.interrupted = true;
+    } catch { /* 没在跑就无所谓 */ }
+    try {
+      await req('/queue', { method: 'POST', ...json, body: JSON.stringify({ clear: true }) });
+      out.cleared = true;
+    } catch { }
+    return out;
+  }
+
+  /** 等待一个已经提交的任务（页面刷新后接回用）：轮询 history，不需要 ws */
+  async function waitFor(promptId, onStatus = () => { }) {
+    const t0 = Date.now();
+    let miss = 0;
+    while (true) {
+      let inQueue = false;
+      try {
+        const q = await queueInfo();
+        const all = [].concat(q.queue_running || [], q.queue_pending || []);
+        inQueue = all.some(it => it && (String(it[1]) === String(promptId) || String(it[0]) === String(promptId)));
+      } catch { /* 引擎一瞬间没回应，继续等 */ }
+
+      let entry = null;
+      try { entry = await history(promptId); } catch { }
+
+      if (entry) {
+        const imgs = extractImages(entry);
+        // 这里拿到的是「文件名/子目录」这类元数据，必须像 run() 那样真正下载成 blob，
+        // 否则入库时会拿到 undefined 的 blob（表现为「入库失败」）。
+        if (imgs.length) return { images: await collectImages(imgs, onStatus), viaWs: false, resumed: true };
+        throw new Error('任务结束了但没有输出图片（可能被中断）');
+      }
+      if (!inQueue) {
+        if (++miss >= 3) throw new Error('任务已不在引擎里（被中断或引擎重启过）');
+      } else {
+        miss = 0;
+      }
+      onStatus(inQueue ? '引擎还在跑这个任务…' : '等待结果…');
+      await new Promise(r => setTimeout(r, 2500));
+      if (Date.now() - t0 > 3 * 3600 * 1000) throw new Error('等待超时');
+    }
   }
 
   async function history(promptId) {
@@ -234,7 +385,10 @@ window.Comfy = (function () {
   /* ---------------- WebSocket 实时进度 ---------------- */
   let ws = null;
   let wsHook = null;
-  const MAX_WAIT = 6 * 60 * 1000;
+  // 等待上限。原来是 6 分钟 —— 但 16 GB 机器上跑一张 1216×832 的 Krea2 要 25~27 分钟，
+  // 于是每次都在第 6 分钟被判「执行结束但没有输出图片」，图其实已经生成好了。
+  // 放到 60 分钟；真超时也会明确告诉用户「任务还在跑，刷新可接回」。
+  const MAX_WAIT = 60 * 60 * 1000;
 
   function wsUrl() {
     return base().replace(/^http/, 'ws') + '/ws?clientId=' + encodeURIComponent(clientId);
@@ -274,6 +428,10 @@ window.Comfy = (function () {
           new Error('执行出错：' + (d.exception_message || d.node_type || '未知错误')),
           { fatal: true }
         ));
+        break;
+      case 'execution_interrupted':
+        // 用户点了取消：立刻结束等待。不然 run() 会一直挂到 MAX_WAIT
+        wsHook?.fail?.(new Error('任务已中断'));
         break;
     }
   }
@@ -321,15 +479,25 @@ window.Comfy = (function () {
   }
 
   /** WS 说完成了，history 可能还差一拍，再补问几次 */
-  async function waitEntry(promptId, ms = 8000) {
+  async function waitEntry(promptId, ms = 20000) {
     const t0 = Date.now();
+    let last = null;
     while (Date.now() - t0 < ms) {
       const e = await history(promptId);
-      if (e && (e.outputs && Object.keys(e.outputs).length)) return e;
-      if (e?.status?.completed) return e;
+      if (e) {
+        last = e;
+        if (e.outputs && Object.keys(e.outputs).length) return e;
+        if (e.status && e.status.completed) {
+          // completed 先落、outputs 后落：多等一拍再确认，别当场判「没图」
+          await new Promise(r => setTimeout(r, 600));
+          const e2 = await history(promptId);
+          if (e2 && e2.outputs && Object.keys(e2.outputs).length) return e2;
+          last = e2 || last;
+        }
+      }
       await new Promise(r => setTimeout(r, 300));
     }
-    return await history(promptId);
+    return last || await history(promptId);
   }
 
   /**
@@ -339,9 +507,10 @@ window.Comfy = (function () {
    * @param {function} onStatus  (text, state, step, total)
    * @param {function} onProgress ({phase, step, total, node, elapsed})
    */
-  async function run(apiPrompt, onStatus = () => { }, onProgress = () => { }) {
+  async function run(apiPrompt, onStatus = () => { }, onProgress = () => { }, onQueued = () => { }) {
     onStatus('提交中…');
-    const promptId = await queue(apiPrompt);
+    const promptId = await queue(withFreshSeeds(stripPluginSeeds(apiPrompt)));
+    try { onQueued(promptId); } catch { }
     onStatus('已排队，等待执行…');
 
     const started = Date.now();
@@ -382,8 +551,11 @@ window.Comfy = (function () {
       if (finished) {
         const entry = await waitEntry(promptId);
         const images = extractImages(entry);
-        if (!images.length) throw new Error('执行结束但没有输出图片');
-        return { promptId, images: await collectImages(images, onStatus), viaWs: true };
+        if (images.length) {
+          return { promptId, images: await collectImages(images, onStatus), viaWs: true };
+        }
+        // 没有图：可能 outputs 还没落盘，也可能被中断。不在这里判死，落到轮询兜底
+        onStatus('等结果落盘…');
       }
     }
 
@@ -395,7 +567,10 @@ window.Comfy = (function () {
       if (entry) {
         const st = entry.status;
         if (st?.status_str === 'error') {
-          const msg = (st.messages || []).find(m => m[0] === 'execution_error');
+          const msgs = st.messages || [];
+          const interrupted = msgs.find(m => m[0] === 'execution_interrupted');
+          const msg = msgs.find(m => m[0] === 'execution_error');
+          if (interrupted) throw new Error('任务已中断');
           throw new Error('执行出错：' + (msg ? JSON.stringify(msg[1]).slice(0, 300) : '未知错误'));
         }
         if (st?.completed || extractImages(entry).length) break;
@@ -405,7 +580,13 @@ window.Comfy = (function () {
     }
 
     const images = extractImages(entry);
-    if (!images.length) throw new Error('执行结束但没有输出图片');
+    if (!images.length) {
+      const st = entry && entry.status;
+      if (entry && st && !st.completed) {
+        throw new Error('等待超时（任务应该还在引擎里跑，刷新页面会自动接回）');
+      }
+      throw new Error('执行结束但没有输出图片（确认工作流里有 SaveImage 节点）');
+    }
     return { promptId, images: await collectImages(images, onStatus), viaWs: false };
   }
 
@@ -707,7 +888,9 @@ window.Comfy = (function () {
     ping, objectInfo, objectInfoCached, queueInfo, uiToApi, widgetKeysOf,
     uploadImage, queue, history, fetchImage, run,
     openWs, closeWs, wsConnected: () => !!ws && ws.readyState === 1,
-    analyzeApi, applyInputs, extractImages,
-    ensureEngine, engineStatus, setEngineConfig, setEnginePaths, listDir
+    analyzeApi, applyInputs, extractImages, cancelAll, waitFor,
+    ensureEngine, engineStatus, setEngineConfig, setEnginePaths, listDir,
+    scanModels, restartEngine, outputs,
+    installStart, installStatus, installCancel, pickDir
   };
 })();

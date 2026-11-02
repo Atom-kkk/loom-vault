@@ -514,16 +514,18 @@
       }
       c.innerHTML = `<div class="model-grid">${V.state.workflows.map(w => {
         const m = V.state.models.find(x => x.id === w.modelId);
+        const main = wfMainModel(w);
         return `<div class="model-card">
           <div class="model-card-head">
             <div class="model-card-icon" style="background:var(--panel-3);color:var(--text-2)">${icon('flow', 17)}</div>
             <div style="min-width:0">
               <h3>${esc(w.name)}</h3>
-              <div class="sub">${esc(m?.name || '未关联模型')} · ${esc(w.format === 'ui-json' ? 'UI 格式' : w.format === 'api-json' ? 'API 格式' : (w.format || 'json'))}</div>
+              <div class="sub">${esc(main || m?.name || '未关联模型')} · ${esc(w.format === 'ui-json' ? 'UI 格式' : w.format === 'api-json' ? 'API 格式' : (w.format || 'json'))}</div>
             </div>
             <div class="spacer"></div>
             <div style="display:flex;gap:4px">
               ${w.format === 'ui-json' ? `<button class="icon-btn" data-act="wf-convert" data-id="${w.id}" title="转成可提交的 API 格式">${icon('spark', 14)}</button>` : ''}
+              <button class="icon-btn" data-act="wf-models" data-id="${w.id}" title="切换主模型 / CLIP / VAE / LoRA">${icon('cpu', 14)}</button>
               <button class="icon-btn" data-act="wf-download" data-id="${w.id}" title="下载">${icon('down', 14)}</button>
               <button class="icon-btn" data-act="wf-del" data-id="${w.id}" title="删除">${icon('trash', 14)}</button>
             </div>
@@ -618,6 +620,137 @@
     } catch (e) {
       toast('转换失败：' + e.message, 'err');
     }
+  });
+
+  /* ---------------- 工作流：切换主模型 / CLIP / VAE / LoRA ---------------- */
+  // 位置对应 ComfyUI 原生加载节点的模型字段；改完直接写回工作流 JSON，
+  // 画布上的节点读的是同一条工作流记录（canvas.js 运行时按 workflowId 取），所以流也跟着变。
+  const MODEL_SLOTS = [
+    { node: 'UNETLoader', field: 'unet_name', label: '主模型 UNET', kind: '主模型' },
+    { node: 'CheckpointLoaderSimple', field: 'ckpt_name', label: '主模型 Checkpoint', kind: '主模型' },
+    { node: 'CheckpointLoader', field: 'ckpt_name', label: '主模型 Checkpoint', kind: '主模型' },
+    { node: 'CLIPLoader', field: 'clip_name', label: 'CLIP / 文本编码器', kind: 'CLIP' },
+    { node: 'DualCLIPLoader', field: 'clip_name1', label: 'CLIP 1', kind: 'CLIP' },
+    { node: 'DualCLIPLoader', field: 'clip_name2', label: 'CLIP 2', kind: 'CLIP' },
+    { node: 'VAELoader', field: 'vae_name', label: 'VAE', kind: 'VAE' },
+    { node: 'LoraLoader', field: 'lora_name', label: 'LoRA', kind: 'LoRA' },
+    { node: 'LoraLoaderModelOnly', field: 'lora_name', label: 'LoRA', kind: 'LoRA' },
+  ];
+
+  function wfApi(w) {
+    try {
+      const j = JSON.parse(w.content || '{}');
+      if (j && j.nodes && Array.isArray(j.nodes)) return null;   // UI 格式，先转换
+      return j && typeof j === 'object' ? j : null;
+    } catch { return null; }
+  }
+
+  function wfMainModel(w) {
+    const api = wfApi(w);
+    if (!api) return '';
+    for (const id of Object.keys(api)) {
+      const n = api[id];
+      if (!n || !n.inputs) continue;
+      if (n.class_type === 'UNETLoader') return n.inputs.unet_name || '';
+      if (n.class_type === 'CheckpointLoaderSimple' || n.class_type === 'CheckpointLoader') return n.inputs.ckpt_name || '';
+    }
+    return '';
+  }
+
+  // 取 ComfyUI 节点定义里的下拉候选（兼容 [[...]] 与 [[...], {...}] 两种写法）
+  function comboList(info, ct, field) {
+    const def = info && info[ct];
+    const spec = (def && ((def.input && def.input.required) || {})[field]) ||
+      (def && ((def.input && def.input.optional) || {})[field]);
+    if (!spec) return [];
+    let arr = Array.isArray(spec) ? spec[0] : spec;
+    if (Array.isArray(arr) && arr.length && Array.isArray(arr[0])) arr = arr[0];
+    return Array.isArray(arr) ? arr.filter(x => typeof x === 'string') : [];
+  }
+
+  async function wfModelPicker(w) {
+    const api = wfApi(w);
+    if (!api) return toast('这是 UI 格式工作流，先点闪电图标转成 API 格式', 'err');
+
+    let info = {};
+    try { info = await Comfy.objectInfoCached(); }
+    catch { toast('引擎没连上，只能手动填文件名（建议先启动引擎）', 'err'); }
+
+    const rows = [];
+    Object.keys(api).forEach(id => {
+      const node = api[id];
+      const ct = node && node.class_type;
+      if (!ct || !node.inputs) return;
+      MODEL_SLOTS.filter(sl => sl.node === ct).forEach(sl => {
+        if (!Object.prototype.hasOwnProperty.call(node.inputs, sl.field)) return;
+        rows.push({
+          id, ct, field: sl.field, label: sl.label, kind: sl.kind,
+          value: node.inputs[sl.field],
+          options: comboList(info, ct, sl.field),
+          strength: (typeof node.inputs.strength_model === 'number') ? 'strength_model'
+            : (typeof node.inputs.strength_clip === 'number') ? 'strength_clip' : '',
+          strengthVal: node.inputs.strength_model ?? node.inputs.strength_clip ?? ''
+        });
+      });
+    });
+
+    if (!rows.length) return toast('这个工作流里没有可切换的模型加载节点', 'err');
+
+    const rowHTML = (r, i) => {
+      const dl = `wfm-dl-${i}`;
+      const missing = r.options.length && !r.options.includes(String(r.value));
+      return `<div class="wfm-row">
+        <div class="wfm-kind">${esc(r.kind)}</div>
+        <div class="wfm-main">
+          <input type="text" list="${dl}" data-wfm-i="${i}" value="${esc(String(r.value ?? ''))}"
+                 placeholder="${r.options.length ? '选一个或直接填文件名' : '填模型文件名'}">
+          <datalist id="${dl}">${r.options.map(o => `<option value="${esc(o)}"></option>`).join('')}</datalist>
+          <div class="wfm-sub">${esc(r.label)} · 节点 #${esc(String(r.id))}
+            ${missing ? '<em class="wfm-warn">当前值不在引擎列表里</em>' : ''}</div>
+        </div>
+        ${r.strength ? `<input type="text" class="wfm-strength" data-wfm-s="${i}" value="${esc(String(r.strengthVal))}" title="强度">` : '<div class="wfm-strength-empty"></div>'}
+      </div>`;
+    };
+
+    openModal({
+      title: '切换模型 · ' + w.name,
+      sub: '改完画布上的这个工作流会跟着用新模型（不需要重新上传）',
+      wide: true,
+      body: `<div class="wfm-list">${rows.map(rowHTML).join('')}</div>
+             ${!info || !Object.keys(info).length ? '<p class="hint" style="margin-top:10px">引擎未连接，候选列表为空，可以直接手填文件名。</p>' : `<p class="hint" style="margin-top:10px">候选来自当前引擎已识别的模型目录，共 ${rows.length} 处可切换。</p>`}`,
+      footer: `<button class="btn" data-close>取消</button>
+               <button class="btn primary" id="wfm-save">保存</button>`,
+      onMount: (box, close) => {
+        box.querySelector('#wfm-save').onclick = async () => {
+          const next = JSON.parse(JSON.stringify(api));
+          let changed = 0;
+          rows.forEach((r, i) => {
+            const inp = box.querySelector(`[data-wfm-i="${i}"]`);
+            const st = box.querySelector(`[data-wfm-s="${i}"]`);
+            const node = next[r.id];
+            if (!node || !node.inputs) return;
+            const v = (inp?.value || '').trim();
+            if (v && v !== node.inputs[r.field]) { node.inputs[r.field] = v; changed++; }
+            if (r.strength && st) {
+              const n = parseFloat(st.value);
+              if (!Number.isNaN(n) && n !== node.inputs[r.strength]) { node.inputs[r.strength] = n; changed++; }
+            }
+          });
+          if (!changed) { close(); return toast('没有改动', ''); }
+          const content = JSON.stringify(next);
+          await DB.put('workflows', { ...w, content, size: content.length });
+          await V.reload();
+          close();
+          toast('已切换，画布里的流下次生成就用新模型', 'ok');
+          V.render();
+        };
+      }
+    });
+  }
+
+  V.on('wf-models', async el => {
+    const w = V.state.workflows.find(x => x.id === el.dataset.id);
+    if (w) await wfModelPicker(w);
   });
 
   V.on('wf-download', async el => {
@@ -789,6 +922,44 @@
               画布的「输出」节点把提示词和参考图写进工作流，提交给本地引擎执行。
               引擎由 Loom 托管：<b>点「生成」时会自动拉起，不用你手动开 ComfyUI</b>。
             </p>
+
+            <div class="install-box" id="inst-box">
+              <div class="install-top">
+                <div class="install-top-txt">
+                  <b>还没有 ComfyUI？让 Loom 自己装</b>
+                  <span>自动下载源码 → 建独立 Python 环境 → 装 PyTorch 和依赖 → 写好配置。
+                  不碰系统 Python，装完下面目录会自动填好，直接点「启动引擎」。</span>
+                </div>
+                <button class="btn primary" data-act="engine-install">${icon('down', 14)} 下载并安装</button>
+              </div>
+              <div class="install-row">
+                <label>安装位置</label>
+                <input type="text" id="inst-target" placeholder="选一个空间够的目录，约需 15 GB" value="${esc(engineCfg.install?.default_target || '')}">
+                <button class="btn" data-act="pick-target">选择目录…</button>
+              </div>
+              <div class="install-row">
+                <label>选项</label>
+                <select id="inst-torch">
+                  <option value="auto">PyTorch：自动判断</option>
+                  <option value="cpu">PyTorch：纯 CPU（小、慢）</option>
+                  <option value="cu124">PyTorch：CUDA 12.4</option>
+                  <option value="cu126">PyTorch：CUDA 12.6</option>
+                </select>
+                <label class="install-check"><input type="checkbox" id="inst-mirror" checked> 用国内镜像加速</label>
+              </div>
+              <div class="install-panel" id="inst-panel" hidden>
+                <div class="install-steps" id="inst-steps"></div>
+                <div class="install-bar"><i id="inst-bar-fill"></i></div>
+                <div class="install-msg" id="inst-msg"></div>
+                <pre class="install-log" id="inst-log"></pre>
+                <div class="install-foot">
+                  <span class="hint" id="inst-hint"></span>
+                  <div class="spacer"></div>
+                  <button class="btn sm ghost" data-act="engine-install-cancel" id="inst-cancel">终止</button>
+                </div>
+              </div>
+            </div>
+
             <div class="form-grid">
               <div class="field"><label>引擎目录（ComfyUI 安装位置）</label>
                 <input type="text" id="cf-dir" placeholder="~/ComfyUI 或 /path/to/ComfyUI" value="${esc(engineCfg.comfy_dir || '')}">
@@ -870,6 +1041,15 @@
       if (el) el.textContent = used
         ? `已占用 ${U.fmtSize(used)}${quota ? ' / 配额 ' + U.fmtSize(quota) : ''}`
         : '浏览器未提供存储配额信息';
+
+      // 从别的页面切回来时，把还在跑的安装任务接上（进度、日志继续刷）
+      try {
+        const ist = await Comfy.installStatus();
+        if (ist && (ist.running || ist.ok !== null || ist.error)) {
+          renderInstall(ist);
+          if (ist.running) instStartPoll(); else instStopPoll();
+        }
+      } catch { /* serve.py 不在或旧版本，忽略 */ }
     }
   });
 
@@ -909,6 +1089,142 @@
       toast('本地引擎已启动', 'ok');
     } catch (e) {
       if (stat) stat.innerHTML = `<span style="color:var(--danger)">✕ ${esc(e.message)}</span>`;
+      toast(e.message, 'err');
+    }
+  });
+
+  /* ---------------- 一键安装 ComfyUI ---------------- */
+  let instTimer = null;
+
+  function instQ(id) { return document.querySelector('#' + id); }
+
+  function instStopPoll() {
+    if (instTimer) { clearInterval(instTimer); instTimer = null; }
+  }
+
+  function instStartPoll() {
+    instStopPoll();
+    instTimer = setInterval(() => { pollInstall(); }, 1200);
+  }
+
+  function renderInstall(st) {
+    const panel = instQ('inst-panel');
+    if (!panel) return false;
+    panel.hidden = false;
+
+    const steps = st.steps || [];
+    const marks = { done: '✓', skip: '✓', fail: '✕', running: '•', cancel: '–', pending: '' };
+    instQ('inst-steps').innerHTML = steps.map((s, i) => {
+      const mk = s.state === 'pending' ? String(i + 1) : marks[s.state] || '';
+      return `<span class="inst-step ${s.state}"><i>${mk}</i>${esc(s.label)}</span>`;
+    }).join('<em class="inst-sep">›</em>');
+
+    const done = steps.filter(s => s.state === 'done' || s.state === 'skip').length;
+    const failed = steps.some(s => s.state === 'fail');
+    const pct = st.ok ? 100 : Math.round((done / (steps.length || 1)) * 100);
+    const fill = instQ('inst-bar-fill');
+    if (fill) {
+      fill.style.width = pct + '%';
+      fill.dataset.state = st.ok ? 'ok' : failed ? 'fail' : '';
+    }
+
+    const msg = instQ('inst-msg');
+    if (msg) {
+      if (st.running) {
+        const cur = steps.find(s => s.state === 'running');
+        msg.className = 'install-msg';
+        msg.innerHTML = `<span class="spin"></span> ${esc(cur ? cur.label : '处理中')}… <em>已用 ${st.elapsed || 0}s</em>`;
+      } else if (st.ok) {
+        msg.className = 'install-msg ok';
+        msg.innerHTML = `✓ 安装完成，用时 ${st.elapsed || 0}s。引擎目录已写入配置，可以点「启动引擎」了。`;
+      } else if (st.canceled) {
+        msg.className = 'install-msg';
+        msg.innerHTML = `■ 已取消。已下载的源码/环境会保留，再点一次安装会接着用。`;
+      } else if (st.error) {
+        msg.className = 'install-msg fail';
+        msg.innerHTML = `✕ ${esc(st.error)}`;
+      } else {
+        msg.className = 'install-msg';
+        msg.textContent = '';
+      }
+    }
+
+    const logEl = instQ('inst-log');
+    if (logEl) {
+      const lines = st.log || [];
+      logEl.textContent = lines.join('\n');
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    const cancel = instQ('inst-cancel');
+    if (cancel) cancel.disabled = !st.running;
+    return true;
+  }
+
+  async function pollInstall() {
+    let st;
+    try { st = await Comfy.installStatus(); } catch { return; }
+    if (!renderInstall(st)) { instStopPoll(); return; }
+    if (!st.running) {
+      instStopPoll();
+      if (st.ok) {
+        const dir = instQ('cf-dir');
+        if (dir && st.comfy_dir) dir.value = st.comfy_dir;
+        const stat = instQ('comfy-stat');
+        if (stat) stat.innerHTML = `<span style="color:var(--ok)">✓ 已装好</span> ${esc(st.comfy_dir || '')}`;
+        toast('ComfyUI 安装完成', 'ok');
+      } else if (st.error && !st.canceled) {
+        toast('安装失败：' + st.error, 'err');
+      }
+    }
+  }
+
+  V.on('engine-install', async (el) => {
+    const target = (instQ('inst-target')?.value || '').trim();
+    if (!target) return toast('先选一个安装位置', 'err');
+    const payload = {
+      target_dir: target,
+      torch: instQ('inst-torch')?.value || 'auto',
+      mirror: !!instQ('inst-mirror')?.checked,
+    };
+    const stat = instQ('comfy-stat');
+    if (stat) stat.textContent = '';
+    el.disabled = true;
+    try {
+      const st = await Comfy.installStart(payload);
+      renderInstall(st);
+      instStartPoll();
+    } catch (e) {
+      toast(e.message, 'err');
+    } finally {
+      el.disabled = false;
+    }
+  });
+
+  V.on('pick-target', async (el) => {
+    const cur = (instQ('inst-target')?.value || '').trim();
+    el.disabled = true;
+    const old = el.textContent;
+    el.textContent = '选择中…';
+    try {
+      const p = await Comfy.pickDir(cur, '选择 ComfyUI 安装位置');
+      if (p) {
+        instQ('inst-target').value = p;
+        toast('已选：' + p, 'ok');
+      }
+    } catch (e) {
+      toast(e.message, 'err');
+    } finally {
+      el.disabled = false;
+      el.textContent = old;
+    }
+  });
+
+  V.on('engine-install-cancel', async () => {
+    try {
+      await Comfy.installCancel();
+      toast('已发终止，稍等日志收尾', 'warn');
+    } catch (e) {
       toast(e.message, 'err');
     }
   });

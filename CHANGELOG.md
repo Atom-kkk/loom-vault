@@ -6,8 +6,65 @@
 
 ### 新增
 
+- **图形界面一键装 ComfyUI**：设置页顶部新增安装卡片，点「下载并安装」即自动完成源码获取 → 建独立 venv → 装 PyTorch → 装依赖 → 写 `.engine.json`
+  - **Windows 可自选安装位置**：调用 PowerShell `FolderBrowserDialog` 弹原生文件夹选择框，可直接装到 `D:\AI\ComfyUI`；macOS 走 `osascript`，Linux 走 zenity/kdialog
+  - 六步进度条 + 实时日志（pip 的 `\r` 进度条也能滚动）、可「终止」、可续装
+  - PyTorch 可选自动 / CPU / CUDA 12.4 / CUDA 12.6
+  - 源码获取双通道：`git clone` 超时（240s）或失败自动改用 codeload 压缩包
+  - pip 镜像缺包（清华源滞后于新发布的大包）自动退回官方 PyPI 重试
+  - 新增接口：`/engine/install/start`、`/engine/install/status`、`/engine/install/cancel`、`/engine/pick-dir`
 - **一键装引擎**：`scripts/setup-engine.sh`（Mac/Linux）与 `scripts/setup-engine.bat`（Windows），别人 clone 后跑一次，自动装好 ComfyUI 引擎（含 Python + PyTorch），无需手动折腾
 - serve.py 自动探测 `engine/` 目录作为引擎位置（setup 脚本装完即自动连上）
+- `scripts/fetch_reference_gcore.py`：固定走 gcore.jsdelivr.net 拉参考缩略图，绕过系统代理（原脚本的 cdn/fastly 节点会 301 到不可达的 raw.githubusercontent.com）
+
+### 新增（模型路径）
+- **模型目录自动识别**：新增 `/engine/scan-models`，扫描 `<安装根>/models`、`ComfyUI/models`、`~/ComfyUI/models`、`~/ComfyUI-Shared/models`，按类型映射（checkpoints / diffusion_models / loras / vae / clip / text_encoders / controlnet / embeddings …），同类型取「有内容且模型最多」的那个
+- 「高级选项 · 模型路径」打开即自动预填，标「自动识别」并显示可用模型数与正在下载数；保存后自动重启引擎生效
+- 引擎冷启动时自动把识别到的目录挂进 `extra_model_paths.yaml`（跳过 ComfyUI 自带 models，避免列表重复）
+
+### 新增（工作流换模型）
+- **工作流卡片上直接换模型**：卡片新增「切换模型」按钮，弹窗列出该工作流里所有模型加载节点——主模型（UNETLoader / CheckpointLoader）、CLIP（CLIPLoader / DualCLIPLoader 双槽）、VAE、每个 LoRA（含强度可改）
+- 候选值来自当前 ComfyUI 引擎真实可用的模型列表（读 `/object_info` 的 combo），用 `input + datalist` 实现「可下拉可手填」；当前值不在列表会标黄提示
+- 保存即写回工作流 JSON，画布上的节点运行时按 workflowId 读取同一条记录，**下次生成自动用新模型，不用重新上传工作流**
+- 卡片副标题改为显示当前主模型文件名（原来只显示「未关联模型」）
+
+### 新增（刷新后接回任务）
+- **提交时记录 promptId**，页面刷新/关掉再回来，画布会自动把引擎里还在跑的任务接回来：轮询 `/queue` 判断是否还在跑、`/history/<id>` 取结果，拿到图后照常入库并生成结果节点，状态里标「刷新后接回」
+- 接不回来时（被中断 / 引擎重启过 / 已超时）节点会显示「上次任务没接上：原因」，不会一直卡在「生成中」
+- 刷新不再丢图：以前 `runGen` 的 await 随刷新一起死掉，图只落在 `ComfyUI/output/` 不进图库
+
+### 新增（引擎出图导入）
+- 画布工具栏新增「引擎出图」：列出 ComfyUI `output/` 里的图，支持单张/全部导入图库，PNG 内嵌参数自动解析
+- 后端 `/engine/outputs` 返回出图目录清单（名称/体积/时间），最新在前
+
+### 修复（全面体检）
+- **长任务被 6 分钟上限判死（严重）**：`MAX_WAIT` 只有 6 分钟，而 16 GB 机器上一张 Krea2 要 25~27 分钟，于是每次都在第 6 分钟抛「执行结束但没有输出图片」——图其实已生成。上限改为 60 分钟
+- **接回时图片根本没下载（严重）**：`waitFor` 把 history 里的「文件名/子目录」元数据直接当结果返回，入库时 blob 是 undefined → 控制台「入库失败 TypeError: Cannot read properties of undefined (reading 'type')」，节点永远停在「完成但没有拿到图片」。现在和 `run()` 一样先下载成 blob
+- **取消后要干等 60 分钟**：WS 没处理 `execution_interrupted`，取消后 `run()` 一直挂着。现已处理，点取消立即结束
+- **等待完成但 outputs 晚落盘**：`waitEntry` 一见 `status.completed` 就返回，拿到空 outputs 后误报「没有输出图片」。现在多等一拍，WS 分支也改为落回轮询而不是直接抛错
+- **接回失败时状态不落盘**：`finishGen` 拿不到图时提前 return，`promptId` 清空没写进 IndexedDB，刷新后又变回「正在生成」。已补 `queueSave()`
+- **Windows 上「重启引擎」静默失效**：原实现只认 `lsof`/`ps`（Windows 没有这两个命令），查不到占用端口的 pid 就什么都不做，`start()` 又因为端口在监听而返回「已在运行」。现在 Windows 走 `Get-NetTCPConnection -State Listen`（失败退回 `netstat -ano`），进程校验走 `Get-CimInstance Win32_Process` / `tasklist`
+- **引擎卡死时无法重启**：`ps` 认不出进程就拒绝动手，可「卡在加载模型」恰恰是最需要重启的时候。现在只要**启动时记录的 pid 仍是该端口的监听者**就确认是自己的引擎，允许重启
+- **本机探测会走系统代理**：设了 `http_proxy` 又没排除 127.0.0.1 时，`/system_stats` 探测失败会导致「引擎明明活着却说没启动」。所有回环请求改为显式绕开代理
+- **画布数据缺字段会整页崩**：存档里少了 `view` 时 `renderAll` 抛 `Cannot read properties of undefined (reading 'x')`，整个画布视图白屏。现在渲染前补齐 `nodes/edges/view`
+- 「取消」的提示改为与实际行为一致：中断只在步与步之间生效，重模型可能要等几分钟
+- **节点会僵在「生成中」**：刷新/断线时 `runGen` 被掐断，节点状态却留在 running，于是按钮一直显示「生成中…133s」，其实引擎里啥都没跑。现在画布加载时会问引擎队列，没活干就把这类节点复位成「上次的生成已中断（点生成重来）」
+- **看不到步进进度**：浏览器直连 8188 会被 Origin 校验拦（403），只能走 serve.py 反代，而 WebSocket 走不了 → 进度只剩「生成中 233s」。引擎启动参数加上 `--enable-cors-header`，浏览器可直连、ws 通了，进度恢复成「2/10」
+- **长任务被 6 分钟掐断（严重）**：`MAX_WAIT` 只有 6 分钟，而 16 GB 机器上一张 1216×832 的 Krea2 要 25~27 分钟，于是每次都在第 6 分钟抛「执行结束但没有输出图片」——图其实已经生成好了，却显示失败。上限改为 60 分钟
+- **history 落盘竞态**：`waitEntry` 一看到 `status.completed` 就返回，但 `outputs` 有时晚一拍才写，导致「完成但没图」。现在会多等几轮；WS 分支也不再急着报错，继续走轮询
+- 等待超时时保留 `promptId`（不再清空），刷新页面能自动接回还在跑的任务
+- **「取消」按钮之前根本没生效**：上一版只生成了补丁文件、没有写回 `assets/canvas.js`，代码里其实没有按钮。现在生成中会真的出现「取消」，点击 = `POST /interrupt`（停当前）+ `POST /queue {clear:true}`（清排队）
+- 内置工作流的 `filename_prefix` 写的是 A1111 的 `%date:yyyyMMddhhmmss%`，ComfyUI 不认，出图文件名会变成 `Krea2-%date:yyyyMMddhhmmss%_00001_.png`。改成 `Krea2`，老库里的工作流也会自动迁移（WF_VERSION 3）
+- **「重启引擎」可能误杀别的进程（严重）**：旧实现直接 `os.kill(.engine.json 里记的 pid)`，一旦这个 pid 被系统复用，杀掉的可能是任意程序——实测把 serve.py 自己都杀了。现在改为：先用 `lsof` 找出**真正占着引擎端口**的 pid，再用 `/system_stats`（或 `ps` 命令行）确认它确实是 ComfyUI 才动手；认不出来就明确拒绝并提示，不再盲杀。终止用 SIGTERM，等 20 秒不退才 SIGKILL
+- **内置默认工作流依赖第三方插件**：`KREA2 CC 人像` 原先用 rgthree 的 `Seed (rgthree)` 节点串 KSampler.seed，没装插件的人点「生成」直接 400 `missing_node_type`。v2 改成原生 `seed: -1`，由 `comfy.js` 提交前随机成整数；老用户库里已播种的那份会由 `builtin.js::migrate()` 自动改写（只拆 rgthree，不动用户改过的提示词）
+- **ComfyUI 校验错误不再抛英文 JSON**：`/prompt` 400 现在翻成中文——缺插件节点会点名节点、模型不在列表会提示「没下载完 / 目录没挂上」
+- **`extra_model_paths.yaml` 格式错误**：原来把所有 section 又套了一层 `loom_shared:`，ComfyUI 读到嵌套字典直接崩（`AttributeError: 'dict' object has no attribute 'split'`）。改为按 base_path 分组合并成顶层 section
+- 扫描计数只认 `.safetensors/.ckpt/.pt/...`，不会再被 ComfyUI 空目录里的 `put_xxx_here` 占位文件误导；同时识别 `.qkdownloading/.part/.crdownload` 等下载中文件
+- `Engine._find_python` 补齐 Windows 路径（`venv/Scripts/python.exe`、`python_embeded/python.exe`），原来只找 `bin/python3`，Windows 上会误用 serve.py 自己的解释器导致缺 torch
+- **Python 版本门禁**：ComfyUI 要求 3.10+，原来直接用 serve.py 自己的解释器建 venv（macOS 上常是 3.9），引擎一启动就 `TypeError: unsupported operand type(s) for |`。现在会扫描本机 3.10+ 解释器（含 `py` 启动器、Homebrew、python.org 安装位置），必要时自动 `brew install python@3.12`；旧 venv 改名 `venv-old` 留档后重建
+- **子进程不再继承 PYTHONPATH/PYTHONHOME**：建 venv、装依赖、起 ComfyUI 都会剥离，避免新环境误加载宿主 `sitecustomize` 导致后续步骤无声卡死
+- 「启动引擎」等待上限 90s → 180s（首次冷启动要加载 torch 与节点，90s 不够）
+- 安装卡片的进度面板 `[hidden]` 被 `display:flex` 覆盖，收起不生效（已修）
 
 ## [v1.0.0] - 2026-10-30
 

@@ -20,21 +20,41 @@
 ```bash
 git clone git@github.com:Atom-kkk/loom-vault.git
 cd loom-vault
-./scripts/setup-engine.sh      # ① 一键装本地引擎（Mac/Linux；Windows 用 scripts\setup-engine.bat）
-python3 serve.py                # ② 启动（或双击 start.command / start.bat）
+python3 serve.py                # 启动（或双击 start.command / start.bat）
 ```
 
-> 只想要图库 / 提示词库 / 参考库（不接 ComfyUI 出图），跳过第 ① 步直接启动即可。
-> 想要画布出图，先跑 `setup-engine` 把本地引擎装好（首次下载几个 GB，约 10~30 分钟）。
+> 只想看图库 / 提示词库 / 参考库，到这里就够用了。
+> 要画布出图，**在「设置 → ComfyUI」里点「下载并安装」**，或者用命令行脚本 `scripts/setup-engine.sh`（Windows 用 `scripts\setup-engine.bat`）。首次下载几个 GB，约 10~30 分钟。
 
 **Mac / Linux**：双击 `start.command`
 **Windows**：双击 `start.bat`
 **手动**：`python3 serve.py`（默认 8787，自动开浏览器）
 
+### 一键装 ComfyUI（图形界面，推荐）
+
+「设置 → ComfyUI」顶部有一块 **「还没有 ComfyUI？让 Loom 自己装」**：
+
+- **安装位置可以自己选**：点「选择目录…」会弹出系统原生文件夹选择框（Windows 是 FolderBrowserDialog，macOS 是 Finder 选择框），可以直接装到 `D:\AI\ComfyUI` 这类盘符，不再受项目目录限制。
+- **全程自动**：下载 ComfyUI 源码 → 建独立 `venv`（不碰系统 Python）→ 装 PyTorch → 装 ComfyUI 依赖 → 写入 `.engine.json`，装完上面「引擎目录」自动填好，直接点「启动引擎」。
+- **看得见进度**：六个步骤实时高亮，pip 下载百分比实时滚动，失败会显示真实报错而不是「连接被拒」。
+- **可中断可续装**：点「终止」只杀当前步骤，已下好的源码、环境、pip 缓存都保留，再点一次接着来。
+- **PyTorch 版本可选**：自动判断（macOS 走 MPS、检测到 `nvidia-smi` 走 CUDA 12.4、否则 CPU），也可手动指定 CPU / CUDA 12.4 / 12.6。
+- **Python 版本自动处理**：ComfyUI 要求 **Python 3.10+**（源码里大量 `X | None`）。装引擎会自动挑一个 3.10+ 解释器建独立环境；macOS 自带的是 3.9，检测到不够新且装了 Homebrew 时，自动 `brew install python@3.12` 再继续。已有的旧 3.9 环境会改名成 `venv-old` 留档后重建，不会再卡在 `TypeError: unsupported operand type(s) for |` 上。
+- **子进程环境隔离**：建环境和起引擎时都会剥掉宿主机的 `PYTHONPATH` / `PYTHONHOME`，避免新环境误加载外部的 `sitecustomize`（表现为启动后无声卡死）。
+- **国内网络友好**：pip 默认走清华镜像；镜像缺包（新发布的大包常常滞后）会**自动退回官方 PyPI** 重试，不用你手动改源。源码获取先试 `git clone`，超时或失败自动改用 codeload 压缩包。
+
+装出来的目录结构：
+
+```
+你选的目录/
+├── ComfyUI/      源码（含 main.py）
+└── venv/         独立 Python 环境（Windows 在 venv\Scripts\python.exe）
+```
+
 > 必须通过 `http://127.0.0.1:xxxx` 访问，不能双击 `index.html`。
 > 浏览器禁止 `file://` 页面使用 IndexedDB，直接打开会提示「数据库打不开」。这是浏览器的安全策略，不是应用的问题。
 
-从 GitHub 克隆下来后，先跑一次 `python3 scripts/fetch_reference.py` 把三个参考图库的 4345 张缩略图拉回来（约 67 MB，15~25 分钟，可中断续传）。图片没入 git，其余开箱即用。
+从 GitHub 克隆下来后，参考图库的缩略图没入库，需要单独拉一次：图形界面里正常浏览时会按需加载，也可以跑 `python3 scripts/fetch_reference.py` 一次性拉全（4345 张，约 67 MB，可中断续传）。**国内网络如果卡在 cdn/fastly 节点，用 `python3 scripts/fetch_reference_gcore.py`**——固定走 `gcore.jsdelivr.net`，绕过系统代理，快得多。
 
 想先看看效果：把 `demo/` 里的三张图拖进窗口，其中两张带内嵌参数（A1111 与 ComfyUI），会自动解析出提示词、种子、步数、LoRA。
 
@@ -42,12 +62,20 @@ python3 serve.py                # ② 启动（或双击 start.command / start.b
 
 画布的「输出」节点能把提示词和参考图写成工作流，交给本地 ComfyUI 出图。Loom 会**自动拉起 / 复用本地引擎**，你不用手动开 ComfyUI：
 
-1. **跑 `scripts/setup-engine`**：自动装好 ComfyUI 引擎（含 Python + PyTorch），并写进配置。别人 clone 后只需这一条命令。
-2. **画布 → 高级选项**：把模型 / LoRA 目录指过来（如 `~/ComfyUI-Shared/models/checkpoints`），Loom 会写进引擎的 `extra_model_paths.yaml`，无需复制文件。
+1. **设置 → ComfyUI → 下载并安装**（或命令行 `scripts/setup-engine`）：自动装好 ComfyUI 引擎（含独立 Python 环境 + PyTorch），并写进配置。装完点「启动引擎」。
+2. **模型目录自动识别（一般不用手填）**：打开「画布 → 高级选项」，Loom 会自动扫描并填好六类目录（底模 / 扩散模型 / CLIP / 文本编码器 / VAE / LoRA），每项标「自动识别」并显示找到几个模型、还有几个正在下载。
+   扫描位置按优先级：`<安装根>/models` → `ComfyUI/models` → `~/ComfyUI/models` → `~/ComfyUI-Shared/models`，同一类型取「有内容的、模型多的」那个。
+   启动引擎时会把这些目录**自动写进 `extra_model_paths.yaml`**（只写 ComfyUI 目录之外的，避免模型列表重复），换/升级 ComfyUI 都不会丢模型。
+   想手动指定别的目录，直接改输入框再点「保存路径」，会重启引擎使其生效。
 3. 导入工作流（或从「简易节点包」拿一个）→ 写提示词 → 点「生成」，Loom 自动拉起引擎出图。
 
 > 首次冷启动引擎 + 加载大模型可能需要 30~90 秒，画布上会显示「启动引擎中…」。
+3. **换模型不用重传工作流**：「工作流」页每张卡片上点「切换模型」，可以改主模型 / CLIP / VAE / 每个 LoRA 及其强度，候选来自引擎里真实可用的模型；保存后画布上绑定的同一个工作流下次生成就用新模型。
+
+4. **seed = -1 表示每次随机**：提交给引擎前 Loom 会替换成随机整数，不需要额外装「随机种子」插件（旧版内置工作流依赖 rgthree，已去掉）。
+
 > 模型文件本身不在本仓库（太大），需自行下载 `.safetensors` 放进对应目录。
+> 16 GB 内存的 Mac 建议用 fp8 量化的文本编码器（如 `qwen3vl_4b_fp8_scaled`，5.2 GB），bf16 版 8.8 GB 会大量走内存交换，出图很慢。
 
 ---
 
@@ -216,6 +244,10 @@ shallow depth of field, photorealistic, fine skin detail, subtle film grain
 - **多画布**：顶部「画布」里新建 / 切换 / 重命名 / 删除，各自独立保存
 - **撤销 / 重做**：`⌘Z` / `⇧⌘Z`（Windows 用 `Ctrl`），最多 60 步；拖节点、连边、改提示词、换图都能退回去
 - **自动保存**：改动 0.5 秒后写入 IndexedDB，关掉再开还在；图片按 `blobId` 存放，重开自动重新解析地址
+- **中途可取消**：生成时按钮下方出现「取消」，一按即 `POST /interrupt` + 清空排队；节点回到可生成状态，不会报成红色错误
+- **刷新不丢任务**：节点会记住引擎的任务编号（promptId），刷新 / 关掉标签再回来会**自动接回**正在跑的任务，跑完照常入库
+- **「引擎出图」导入**：顶栏按钮列出 ComfyUI `output/` 里的图，单张或全部导入图库，PNG 内嵌参数照样解析
+- **模型目录自动识别**：「高级选项」打开即扫描并预填底模 / 扩散模型 / CLIP / 文本编码器 / VAE / LoRA 六类路径，启动引擎时自动写进 `extra_model_paths.yaml`
 
 **简易节点怎么跑**：提示词、负向、参考图都写在卡片里，点「生成」，会：
 
@@ -225,6 +257,16 @@ shallow depth of field, photorealistic, fine skin detail, subtle film grain
    —— 简易节点上会显示 `12 / 30` 和一条进度条，不再只是「生成中… 8s」这种模糊计时
    连不上 WS（跨域或版本不支持）会**自动退回轮询**，功能不受影响
 4. `GET /view` 把出图拉回来，在右侧自动生成一个图片节点，可以继续往下连
+
+**跑起来之后能控制什么**（这几条都是踩过坑之后补的）：
+
+| 场景 | 行为 |
+|---|---|
+| 想停下 | 生成中按钮下方出现「取消」→ 中断当前任务 + 清空排队。ComfyUI 只在步与步之间检查中断，所以重模型要等当前这一步跑完；卡在**加载模型**阶段时中断无效，到设置页「重启引擎」强制中断 |
+| 刷新 / 关标签 | 节点存了 `promptId`，重新进画布会接回任务、跑完入库，状态标「刷新后接回」。接不回来会明说原因，不会一直转圈 |
+| 任务早没了但卡片还在「生成中」 | 进画布时问一次引擎队列，引擎空闲就自动复位成「上次的生成已中断（点生成重来）」 |
+| 图已经在硬盘上了 | 顶栏「引擎出图」→ 单张 / 全部导入，读 PNG 内嵌参数入库 |
+| 长任务超时 | 等待上限 60 分钟；超时提示会告诉你「任务应该还在引擎里跑，刷新会自动接回」 |
 
 **三种参考图用法都支持**：
 
@@ -295,6 +337,8 @@ shallow depth of field, photorealistic, fine skin detail, subtle film grain
 
 - **LoRA**：名称、基座、文件名、下载链接、体积、建议权重、触发词、备注。入库图片时会按文件名自动关联。
 - **工作流**：上传 ComfyUI 导出的 `.json`（或带 workflow 的 `.png`），自动数出节点数、猜出关联模型，可随时下载原文件。
+  卡片副标题直接显示**当前主模型文件名**；右上角「切换模型」可以改主模型（UNETLoader / CheckpointLoader）、CLIP（含 DualCLIPLoader 双槽）、VAE、每个 LoRA 及其强度——
+  候选来自当前引擎 `/object_info` 里真实可用的模型（可下拉可手填），保存即写回工作流 JSON，**画布里绑同一个工作流的节点下次生成就用新模型，不用重新上传**。
 
 ### 分类
 
@@ -422,3 +466,6 @@ ai-image-vault/
 - 只识别标准 `LoadImage` 节点；用 `LoadImageList` / `ImageBatch` 自拼的多图输入需要自己保证连线顺序
 - 画布节点上限没做虚拟化，节点数建议控制在 200 以内
 - 撤销栈只存在内存里，刷新页面后清空（画布内容本身是存盘的）
+- **中断只在步与步之间生效**：ComfyUI 的机制如此，重模型一步可能几分钟；卡在「加载模型」阶段时中断无效，只能用「重启引擎」强制结束
+- **大模型在小内存机器上极慢**：16 GB 统一内存跑 12 GB 的 fp8 底模（如 Krea2）+ 5 GB 文本编码器，会大量走 swap，实测 20~27 分钟一张。这不是 bug，是物理限制；想快就换 fp16 的小底模（SDXL / Illustrious 一类，约 6.5 GB）
+- **Windows 分支未在真机验证**：一键安装的目录选择框、重启引擎的进程查找（`Get-NetTCPConnection` / `Get-CimInstance`）都是按标准接口写的，但作者手上只有 macOS，Windows 上第一次用如果报错请提 issue

@@ -247,6 +247,7 @@ window.Canvas = (function () {
     actions: () => `
       <button class="btn" data-cv="import-wf">${V.icon('flow', 14)} 导入工作流</button>
       <button class="btn" data-cv="pack">${V.icon('layers', 14)} 简易节点包</button>
+      <button class="btn" data-cv="outputs">${V.icon('img', 14)} 引擎出图</button>
       <button class="btn" data-cv="adv">${V.icon('cpu', 14)} 高级选项</button>
       <button class="btn" data-cv="list">${V.icon('layers', 14)} 画布</button>`,
     render: async (c) => {
@@ -257,6 +258,7 @@ window.Canvas = (function () {
       if (!list.find(x => x.id === cv.id)) list.unshift(cv);
       buildShell(c);
       renderAll();
+      resumePending();     // 刷新前提交的任务，进来就接回去
       await ensureUrls();
       ensureHiRes(true);   // 后台换原图，不阻塞画布
     }
@@ -305,6 +307,10 @@ window.Canvas = (function () {
 
   function renderAll() {
     if (!cv || !world) return;
+    // 老版本画布 / 外部写入的数据可能缺字段，缺一个 view 就会让整个画布视图崩掉
+    if (!Array.isArray(cv.nodes)) cv.nodes = [];
+    if (!Array.isArray(cv.edges)) cv.edges = [];
+    if (!cv.view || typeof cv.view.x !== 'number') cv.view = { x: 80, y: 60, k: 1 };
     world.style.transform = `translate(${cv.view.x}px, ${cv.view.y}px) scale(${cv.view.k})`;
     const zoomEl = host.querySelector('#cv-zoom');
     if (zoomEl) zoomEl.textContent = Math.round(cv.view.k * 100) + '%';
@@ -379,7 +385,8 @@ window.Canvas = (function () {
         ${n.data.statusText ? `<div class="cv-gen-status ${st}">${esc(n.data.statusText)}</div>` : ''}
         <button class="cv-run" data-cvnode="run" ${st === 'running' ? 'disabled' : ''}>
           ${st === 'running' ? '<span class="spinner"></span> 生成中' : '生成'}
-        </button>`;
+        </button>
+        ${st === 'running' ? '<button class="cv-cancel" data-cvnode="cancel">取消</button>' : ''}`;
     } else if (n.type === 'simple') {
       const st = n.data.status || 'idle';
       const slots = n.data.imageSlots || 0;
@@ -401,7 +408,8 @@ window.Canvas = (function () {
         ${n.data.statusText ? `<div class="cv-gen-status ${st}">${esc(n.data.statusText)}</div>` : ''}
         <button class="cv-run" data-cvnode="run" ${st === 'running' ? 'disabled' : ''}>
           ${st === 'running' ? '<span class="spinner"></span> 生成中' : '生成'}
-        </button>`;
+        </button>
+        ${st === 'running' ? '<button class="cv-cancel" data-cvnode="cancel">取消</button>' : ''}`;
     } else if (n.type === 'wf') {
       const keys = n.data.keys;
       const vals = n.data.widgets || [];
@@ -508,6 +516,7 @@ window.Canvas = (function () {
         if (act === 'del') removeNode(n.id);
         if (act === 'replace') pickImageFor(n);
         if (act === 'run') runGen(n);
+        if (act === 'cancel') cancelRun(n);
         if (act === 'addref') addRefToOutput(n);
         if (act === 'pick' && n.type === 'simple') pickImageFor(n);
       });
@@ -936,6 +945,18 @@ window.Canvas = (function () {
   /* ============================================================
      ComfyUI 生成
      ============================================================ */
+  /** 统一的节点状态更新（runGen 与「接回任务」共用） */
+  function nodeStatus(n, text, st = 'running', step, total) {
+    n.data.status = st;
+    n.data.statusText = text;
+    if (step != null && total) n.data.prog = { step, total };
+    if (st !== 'running') n.data.prog = null;
+    const el = world.querySelector(`.cv-node[data-id="${n.id}"]`);
+    if (el) el.replaceWith(makeNodeEl(n));
+    const fresh = world.querySelector(`.cv-node[data-id="${n.id}"]`);
+    if (fresh) bindNodeEvents(fresh, n);
+  }
+
   function incoming(node) {
     const ids = cv.edges.filter(e => e.to === node.id).map(e => e.from);
     return ids.map(nodeById).filter(Boolean);
@@ -972,16 +993,8 @@ window.Canvas = (function () {
       return V.toast('工作流内容不是合法 JSON', 'err');
     }
 
-    const setStatus = (text, st = 'running', step, total) => {
-      n.data.status = st;
-      n.data.statusText = text;
-      if (step != null && total) n.data.prog = { step, total };
-      if (st !== 'running') n.data.prog = null;
-      const el = world.querySelector(`.cv-node[data-id="${n.id}"]`);
-      if (el) el.replaceWith(makeNodeEl(n));
-      const fresh = world.querySelector(`.cv-node[data-id="${n.id}"]`);
-      if (fresh) bindNodeEvents(fresh, n);
-    };
+    n.data.canceled = false;   // 新的一轮，清掉上一次的取消标记
+    const setStatus = (text, st = 'running', step, total) => nodeStatus(n, text, st, step, total);
 
     setStatus('准备中…');
     try {
@@ -1017,58 +1030,158 @@ window.Canvas = (function () {
       const res = await Comfy.run(
         applied.api,
         (t, st, step, total) => setStatus(t, st || 'running', step, total),
-        x => { if (x.phase === 'step') setStatus(`生成中 ${x.step}/${x.total}`, 'running', x.step, x.total); }
+        x => { if (x.phase === 'step') setStatus(`生成中 ${x.step}/${x.total}`, 'running', x.step, x.total); },
+        // 记下 promptId：页面刷新后靠它把任务接回来
+        (pid) => { n.data.promptId = pid; queueSave(); }
       );
 
-      // 提取工作流里的关键信息，随图一起入库
-      const meta = Parse.parseComfy(api) || {};
-      const refIds = refs.map(r => r.data.refId || r.data.label).filter(Boolean);
-
-      setStatus('入库中…');
-      const savedIds = [];
-      for (const item of res.images) {
-        try {
-          const newId = await saveResultToVault(item.blob, {
-            meta,
-            positive,
-            negative,
-            refIds,
-            workflowId: wf.id,
-            workflowName: wf.name
-          });
-          if (newId) savedIds.push(newId);
-        } catch (e) {
-          console.warn('入库失败', e);
-        }
-      }
-
-      const first = res.images[0].blob;
-      const url = URL.createObjectURL(first);
-      n.data.resultSrc = url;
-      n.data.status = 'done';
-      n.data.statusText = `完成 · ${res.images.length} 张${savedIds.length ? ' · 已入库' : ''}`;
-
-      // 结果另起一个图片节点，方便继续连线
-      const pos = { x: n.x + (n.w || 300) + 80, y: n.y };
-      addNode('image', {
-        pos,
-        data: { src: url, label: savedIds[0] || '生成结果', imageId: savedIds[0] || '' }
-      });
-
-      setStatus(`完成 · 已存 ${savedIds.length} 张${res.viaWs ? ' · WS' : ''}`, 'done');
-      if (savedIds.length) {
-        await V.reload();
-        V.renderNav();
-        V.toast(`生成完成，已存入图库：${savedIds.join('、')}`, 'ok');
-      } else {
-        V.toast('生成完成（未入库）', 'ok');
-      }
+      n.data.promptId = '';
+      await finishGen(n, res, { api, positive, negative, refs, wf });
     } catch (e) {
+      // 用户主动取消时，别把中断报成红色错误
+      if (n.data.canceled) {
+        n.data.promptId = '';
+        nodeStatus(n, '已取消', 'idle');
+        queueSave();
+        return;
+      }
+      // 只是等待超时（任务还在引擎里跑）就把 promptId 留着，刷新后能自动接回
+      if (!/超时/.test(String(e.message || ''))) n.data.promptId = '';
       n.data.status = 'error';
       n.data.statusText = e.message.slice(0, 80);
       const el = world.querySelector(`.cv-node[data-id="${n.id}"]`);
       if (el) { el.replaceWith(makeNodeEl(n)); }
       V.toast(e.message, 'err');
+    }
+  }
+
+  /** 取消：中断正在跑的 + 清空排队里还没开始的 */
+  async function cancelRun(n) {
+    if (n && n.data) {
+      n.data.canceled = true;
+      n.data.promptId = '';
+      nodeStatus(n, '已取消', 'idle');
+      queueSave();
+    }
+    try {
+      const r = await Comfy.cancelAll();
+      if (!(r.interrupted || r.cleared)) {
+        V.toast('引擎没回应取消请求，可能已经空闲或卡死了', 'err');
+        return;
+      }
+      // ComfyUI 只在「每一步之间」检查中断标记：重模型一步要几分钟，
+      // 所以这里如实说明，别让用户以为点了没反应。
+      let pending = 0;
+      try {
+        const q = await Comfy.queueInfo();
+        pending = [].concat(q.queue_running || [], q.queue_pending || []).length;
+      } catch { }
+      V.toast(pending
+        ? `已发出中断，排队已清空；正在跑的这一张要等当前这一步做完才停（重模型可能要几分钟）`
+        : '已取消', 'ok');
+    } catch (e) {
+      V.toast('取消失败：' + e.message, 'err');
+    }
+  }
+
+  /** 结果收尾：入库 + 节点显示 + 另起图片节点（runGen 与「接回任务」共用） */
+  async function finishGen(n, res, ctx) {
+    const { api, positive, negative, refs = [], wf } = ctx || {};
+    const meta = (api && Parse.parseComfy(api)) || {};
+    const refIds = refs.map(r => r.data.refId || r.data.label).filter(Boolean);
+
+    nodeStatus(n, '入库中…', 'running');
+    const savedIds = [];
+    for (const item of (res.images || [])) {
+      try {
+        const newId = await saveResultToVault(item.blob, {
+          meta, positive, negative, refIds,
+          workflowId: wf ? wf.id : '',
+          workflowName: wf ? wf.name : ''
+        });
+        if (newId) savedIds.push(newId);
+      } catch (e) {
+        console.warn('入库失败', e);
+      }
+    }
+
+    const first = res.images && res.images[0] && res.images[0].blob;
+    if (!first) {
+      nodeStatus(n, '完成但没有拿到图片（去「引擎出图」里手动导入）', 'idle');
+      n.data.promptId = '';
+      queueSave();
+      return;
+    }
+    const url = URL.createObjectURL(first);
+    n.data.resultSrc = url;
+    n.data.status = 'done';
+    n.data.statusText = `完成 · ${res.images.length} 张${savedIds.length ? ' · 已入库' : ''}`;
+    n.data.prog = null;
+
+    addNode('image', {
+      pos: { x: n.x + (n.w || 300) + 80, y: n.y },
+      data: { src: url, label: savedIds[0] || '生成结果', imageId: savedIds[0] || '' }
+    });
+
+    nodeStatus(n, `完成 · 已存 ${savedIds.length} 张${res.viaWs ? ' · WS' : ''}${res.resumed ? ' · 刷新后接回' : ''}`, 'done');
+    queueSave();
+    if (savedIds.length) {
+      await V.reload();
+      V.renderNav();
+      V.toast(`生成完成，已存入图库：${savedIds.join('、')}`, 'ok');
+    } else {
+      V.toast('生成完成（未入库）', 'ok');
+    }
+  }
+
+  /** 页面刷新后：把还带着 promptId 的节点接回引擎里的任务；顺便清理「僵在生成中」的节点 */
+  let resumedOnce = false;
+  async function resumePending() {
+    if (resumedOnce) return;
+    resumedOnce = true;
+    const nodes = ((cv && cv.nodes) || []).filter(x => x && (x.type === 'gen' || x.type === 'simple') && x.data);
+    const pend = nodes.filter(x => x.data.promptId);
+
+    // 没有 promptId 却挂着「生成中」的：十有八九是刷新/断线时冻住的，
+    // 先问引擎还有没有活干，没有就复位，别让节点一直转圈。
+    const stale = nodes.filter(x => !x.data.promptId && x.data.status === 'running');
+    if (stale.length) {
+      let busy = 0;
+      try {
+        const q = await Comfy.queueInfo();
+        busy = [].concat(q.queue_running || [], q.queue_pending || []).length;
+      } catch { busy = 1; }   // 问不到就别乱复位
+      if (!busy) {
+        stale.forEach(x => nodeStatus(x, '上次的生成已中断（点生成重来）', 'idle'));
+        queueSave();
+      }
+    }
+
+    if (!pend.length) return;
+
+    for (const n of pend) {
+      const pid = n.data.promptId;
+      nodeStatus(n, '正在接回刷新前的任务…', 'running');
+      try {
+        const res = await Comfy.waitFor(pid, t => nodeStatus(n, t, 'running'));
+        const inputs = incoming(n);
+        const prompts = inputs.filter(x => x.type === 'prompt');
+        const positive = n.type === 'simple'
+          ? (n.data.text || '')
+          : (prompts.find(p => p.data.role !== '负向')?.data.text || '');
+        const negative = n.type === 'simple'
+          ? (n.data.neg || '')
+          : (prompts.find(p => p.data.role === '负向')?.data.text || '');
+        const wf = V.state.workflows.find(w => w.id === n.data.workflowId);
+        let api = null;
+        try { api = wf ? JSON.parse(wf.content) : null; } catch { }
+        n.data.promptId = '';
+        await finishGen(n, res, { api, positive, negative, refs: [], wf });
+      } catch (e) {
+        n.data.promptId = '';
+        nodeStatus(n, '上次任务没接上：' + String(e.message || e).slice(0, 40), 'idle');
+        queueSave();
+      }
     }
   }
 
@@ -1655,13 +1768,100 @@ window.Canvas = (function () {
   }
 
   /* ============================================================
+     从引擎 output 目录导入出图（刷新丢了结果、或在 ComfyUI 里直接跑的图）
+     ============================================================ */
+  async function importOutputFile(name) {
+    const blob = await Comfy.fetchImage({ filename: name, subfolder: '', type: 'output' });
+    let meta = {};
+    try {
+      const texts = await Parse.readPngText(await blob.arrayBuffer());
+      const api = JSON.parse(texts.prompt || texts.workflow || '{}');
+      meta = Parse.parseComfy(api) || {};
+    } catch { /* 没有内嵌参数也能存 */ }
+    return await saveResultToVault(blob, {
+      meta,
+      positive: meta.positive || '',
+      negative: meta.negative || '',
+      workflowName: '引擎出图'
+    });
+  }
+
+  async function outputsModal() {
+    let data;
+    try { data = await Comfy.outputs(60); }
+    catch (e) { return V.toast('拿不到出图目录：' + e.message, 'err'); }
+    const items = data.items || [];
+    if (!items.length) return V.toast('引擎的 output 目录里还没有图', 'err');
+
+    const fmt = t => {
+      const d = new Date(t * 1000);
+      return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    };
+    const rows = items.map((it, i) => `
+      <div class="out-row" data-out-i="${i}">
+        <div class="out-main">
+          <b>${esc(it.name)}</b>
+          <span>${U.fmtSize(it.size)} · ${esc(fmt(it.mtime))}</span>
+        </div>
+        <button class="btn sm" data-out-one="${esc(it.name)}">导入</button>
+      </div>`).join('');
+
+    V.openModal({
+      title: '引擎出图 · 导入到图库',
+      sub: esc(data.dir || '') + ` · 共 ${data.total || items.length} 张`,
+      wide: true,
+      body: `<p class="hint" style="margin:0 0 10px">这里列的是 ComfyUI <code>output/</code> 目录里的图。刷新页面丢了结果的、或者你在 ComfyUI 界面里直接跑出来的，都能从这里收进 Loom（PNG 内嵌参数会自动解析）。</p>
+             <div class="out-list">${rows}</div>`,
+      footer: `<button class="btn" data-close>关闭</button>
+               <button class="btn primary" id="out-import-all">全部导入（${items.length}）</button>`,
+      onMount: (box, close) => {
+        const doOne = async (name, btn) => {
+          const old = btn ? btn.textContent : '';
+          if (btn) { btn.disabled = true; btn.textContent = '导入中…'; }
+          try {
+            const id = await importOutputFile(name);
+            V.toast(id ? `已入库：${id}` : '这张没存进去（可能在 file:// 下打开）', id ? 'ok' : 'err');
+            return !!id;
+          } catch (e) {
+            V.toast('导入失败：' + e.message, 'err');
+            return false;
+          } finally {
+            if (btn) { btn.disabled = false; btn.textContent = old; }
+          }
+        };
+
+        box.querySelectorAll('[data-out-one]').forEach(b => {
+          b.onclick = () => doOne(b.dataset.outOne, b);
+        });
+
+        const all = box.querySelector('#out-import-all');
+        if (all) all.onclick = async () => {
+          all.disabled = true;
+          const total = items.length;
+          let done = 0;
+          for (let i = 0; i < total; i++) {
+            all.textContent = `导入中 ${i + 1}/${total}…`;
+            if (await doOne(items[i].name, null)) done++;
+          }
+          all.textContent = `完成 ${done}/${total}`;
+          await V.reload();
+          V.renderNav();
+          V.toast(`已导入 ${done} 张`, done ? 'ok' : 'err');
+          close();
+        };
+      }
+    });
+  }
+
+  /* ============================================================
      高级选项：模型 / LoRA 等文件路径
      ============================================================ */
   async function advancedModal() {
-    // 读当前引擎状态与已配路径
-    let st = {}, dirs = [];
+    // 读当前引擎状态、已配路径，以及后端自动识别到的模型目录
+    let st = {}, dirs = [], scan = { found: {}, files: {}, roots: [] };
     try { st = await Comfy.engineStatus(); } catch { st = {}; }
     try { dirs = (await Comfy.listDir('~')).entries?.filter(e => e.dir)?.map(e => e.path) || []; } catch { }
+    try { scan = (await Comfy.scanModels()) || scan; } catch { }
 
     const PATH_FIELDS = [
       { key: 'checkpoints', label: '底模（checkpoints）', hint: '.safetensors / .ckpt 完整模型' },
@@ -1673,12 +1873,26 @@ window.Canvas = (function () {
     ];
 
     const paths = st.paths || {};
+    const found = scan.found || {};
+    const counts = scan.files || {};
+    const partials = scan.partial || {};
+    const partialOf = (k) => (partials[k] ? `（另有 ${partials[k]} 个正在下载）` : '');
+    // 已手工配置的优先；没配过就用自动识别到的填进去
+    const valOf = (k) => paths[k] || found[k] || '';
+    // 自动挂载进配置的路径也标成「自动识别」：只要它和扫描结果一致
+    const isAuto = (k) => !!found[k] && (!paths[k] || paths[k] === found[k]);
+    const autoKeys = PATH_FIELDS.map(f => f.key).filter(isAuto);
+    const setKeys = PATH_FIELDS.map(f => f.key).filter(k => paths[k] && paths[k] !== found[k]);
+    const rootsTxt = (scan.roots || []).map(r => r.label).join(' · ');
+
     const field = (f) => `
       <div class="field">
-        <label>${esc(f.label)}</label>
+        <label>${esc(f.label)}${isAuto(f.key) ? '<em class="auto-tag">自动识别</em>' : ''}</label>
         <input type="text" data-path="${f.key}" placeholder="绝对路径，如 /Users/xxx/models/checkpoints"
-               value="${esc(paths[f.key] || '')}">
-        <span class="hint">${esc(f.hint)}</span>
+               value="${esc(valOf(f.key))}">
+        <span class="hint">${isAuto(f.key)
+        ? `已找到 ${counts[f.key] || 0} 个模型${partialOf(f.key)} · ${esc(f.hint)}`
+        : esc(f.hint)}</span>
       </div>`;
 
     V.openModal({
@@ -1687,8 +1901,13 @@ window.Canvas = (function () {
       wide: true,
       body: `
         <div class="pk-sec">
+          ${autoKeys.length
+        ? `<div class="adv-auto">✓ 已自动识别 ${autoKeys.length} 类模型目录${rootsTxt ? `（扫描：${esc(rootsTxt)}）` : ''}，直接点「保存路径」即可生效</div>`
+        : setKeys.length
+          ? `<div class="adv-auto">已配置 ${setKeys.length} 类模型目录，引擎启动时会自动挂载。想重新识别：把对应输入框清空再保存。</div>`
+          : `<div class="adv-auto none">没自动找到模型目录。把模型放到 <code>${esc(((scan.comfy_dir || 'ComfyUI').replace(/\/ComfyUI$/, '')) + '/models')}</code> 下（checkpoints / loras / vae / text_encoders），再打开这里就会自动认出来。</div>`}
           <div class="form-grid">${PATH_FIELDS.map(field).join('')}</div>
-          ${dirs.length ? `<div class="hint" style="margin-top:10px">检测到的目录：${dirs.map(d => `<code>${esc(d)}</code>`).join(' ')}</div>` : ''}
+          ${(!autoKeys.length && dirs.length) ? `<div class="hint" style="margin-top:10px">家目录下的文件夹：${dirs.map(d => `<code>${esc(d)}</code>`).join(' ')}</div>` : ''}
         </div>
         <div class="pk-sec">
           <h3>引擎状态</h3>
@@ -1710,8 +1929,15 @@ window.Canvas = (function () {
           });
           try {
             await Comfy.setEnginePaths(mapping);
-            V.toast('路径已保存，下次出图生效', 'ok');
             close();
+            if (st.running) {
+              V.toast('已保存，正在重启引擎让路径生效…', 'ok');
+              Comfy.restartEngine()
+                .then(() => V.toast('引擎已重启，模型路径生效', 'ok'))
+                .catch((e) => V.toast('引擎重启失败：' + e.message, 'err'));
+            } else {
+              V.toast('路径已保存，下次启动引擎时生效', 'ok');
+            }
           } catch (e) {
             V.toast('保存失败：' + e.message, 'err');
           }
@@ -1815,6 +2041,7 @@ window.Canvas = (function () {
     if (a === 'list') canvasListModal();
     if (a === 'pack') simplePackModal();
     if (a === 'adv') advancedModal();
+    if (a === 'outputs') outputsModal();
   });
 
   return {

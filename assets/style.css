@@ -1727,3 +1727,176 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
 #app.side-mini .side-link svg { width: 15px; height: 15px; }
 #app.side-mini .side-actions { flex-direction: column; gap: 4px; }
 #app.side-mini .ghost-btn { height: 32px; }
+
+/* ============================================================
+   一键安装 ComfyUI（设置页）
+   ============================================================ */
+.install-box {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 13px;
+  margin: 0 0 15px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.install-top { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; }
+.install-top-txt { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.install-top-txt b { font-size: 13px; color: var(--text); font-weight: 600; }
+.install-top-txt span { font-size: 11.5px; color: var(--text-2); line-height: 1.65; }
+.install-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.install-row > label {
+  font-size: 11.5px; font-weight: 600; color: var(--text-2);
+  letter-spacing: .3px; min-width: 54px; flex: 0 0 auto;
+}
+.install-row > input[type="text"] { flex: 1 1 240px; min-width: 160px; font-size: 12.5px; }
+.install-row > select { flex: 0 0 auto; width: auto; min-width: 200px; height: 34px; padding: 0 9px; font-size: 12.5px; }
+.install-check {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--text-2); white-space: nowrap;
+  min-width: 0 !important; font-weight: 400 !important;
+}
+.install-check input { accent-color: var(--rose); }
+
+.install-panel {
+  display: flex; flex-direction: column; gap: 9px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line);
+}
+/* 类选择器比 UA 的 [hidden] 优先级高，必须显式压掉，否则收起不生效 */
+.install-panel[hidden] { display: none; }
+.install-steps { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.inst-step {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 8px 3px 4px;
+  font-size: 11.5px; color: var(--text-3);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  transition: .25s var(--ease);
+}
+.inst-step i {
+  font-style: normal; width: 15px; height: 15px; flex: 0 0 auto;
+  display: grid; place-items: center;
+  font-size: 9px; font-weight: 700;
+  border-radius: 50%;
+  background: var(--panel-3); color: var(--text-3);
+}
+.inst-step.running { color: var(--text); border-color: var(--rose); background: var(--rose-soft); }
+.inst-step.running i { background: var(--rose); color: #fff; }
+.inst-step.done { color: var(--text-2); border-color: rgba(157, 187, 139, .45); }
+.inst-step.done i { background: rgba(157, 187, 139, .22); color: var(--ok); }
+.inst-step.skip { opacity: .72; }
+.inst-step.cancel { opacity: .6; }
+.inst-step.cancel i { background: var(--panel-3); color: var(--text-2); }
+.inst-step.fail { color: var(--danger); border-color: rgba(224, 138, 128, .55); background: var(--danger-soft); }
+.inst-step.fail i { background: var(--danger-soft); color: var(--danger); }
+.inst-sep { font-style: normal; color: var(--text-3); opacity: .5; font-size: 11px; }
+
+.install-bar { height: 5px; border-radius: 3px; background: var(--panel-3); overflow: hidden; }
+.install-bar > i {
+  display: block; height: 100%; width: 0;
+  background: var(--rose);
+  transition: width .4s var(--ease), background .3s var(--ease);
+}
+.install-bar > i[data-state="ok"] { background: var(--ok); }
+.install-bar > i[data-state="fail"] { background: var(--danger); }
+
+.install-msg { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); }
+.install-msg em { font-style: normal; color: var(--text-3); font-size: 11px; }
+.install-msg.ok { color: var(--ok); }
+.install-msg.fail { color: var(--danger); align-items: flex-start; }
+
+.install-log {
+  margin: 0; max-height: 190px; overflow: auto;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-family: var(--mono); font-size: 10.8px; line-height: 1.65;
+  color: var(--text-2);
+  white-space: pre-wrap; word-break: break-all;
+}
+.install-log:empty { display: none; }
+.install-foot { display: flex; align-items: center; gap: 10px; }
+.install-foot .spacer { flex: 1; }
+
+.spin {
+  width: 11px; height: 11px; flex: 0 0 auto;
+  border: 1.6px solid var(--line-strong);
+  border-top-color: var(--rose);
+  border-radius: 50%;
+  animation: loom-spin .8s linear infinite;
+}
+@keyframes loom-spin { to { transform: rotate(360deg); } }
+
+/* 高级选项：模型目录自动识别提示 */
+.auto-tag {
+  font-style: normal; font-size: 9.5px; font-weight: 600;
+  color: var(--rose); background: var(--rose-soft);
+  border-radius: 4px; padding: 1px 5px; margin-left: 6px;
+  vertical-align: 1px;
+}
+.adv-auto {
+  font-size: 11.5px; line-height: 1.65;
+  color: var(--ok);
+  background: rgba(157, 187, 139, .1);
+  border: 1px solid rgba(157, 187, 139, .35);
+  border-radius: 8px;
+  padding: 7px 10px;
+  margin-bottom: 11px;
+}
+.adv-auto.none {
+  color: var(--text-2);
+  background: var(--panel-2);
+  border-color: var(--line);
+}
+.adv-auto code {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--text); background: var(--panel);
+  padding: 1px 4px; border-radius: 4px;
+}
+
+/* 工作流 · 切换模型弹窗 */
+.wfm-list { display: flex; flex-direction: column; gap: 9px; }
+.wfm-row { display: flex; align-items: flex-start; gap: 10px; }
+.wfm-kind {
+  flex: 0 0 62px; margin-top: 4px;
+  font-size: 10.5px; font-weight: 600; text-align: center;
+  color: var(--rose); background: var(--rose-soft);
+  border-radius: 6px; padding: 3px 0;
+}
+.wfm-main { flex: 1; min-width: 0; }
+.wfm-main input { width: 100%; font-size: 12.5px; }
+.wfm-sub { font-size: 10.5px; color: var(--text-3); margin-top: 3px; }
+.wfm-warn { font-style: normal; color: var(--warn); margin-left: 4px; }
+.wfm-strength { flex: 0 0 64px; margin-top: 0; text-align: center; font-size: 12.5px; }
+.wfm-strength-empty { flex: 0 0 64px; }
+
+/* 画布生成节点的「取消」 */
+.cv-cancel {
+  width: 100%; margin-top: 6px; height: 26px;
+  border-radius: 8px;
+  border: 1px solid var(--line-input);
+  background: transparent;
+  color: var(--text-2);
+  font-size: 11.5px;
+  transition: .15s var(--ease);
+}
+.cv-cancel:hover { color: var(--danger); border-color: var(--danger); background: var(--danger-soft); }
+
+/* 引擎出图导入列表 */
+.out-list { display: flex; flex-direction: column; gap: 6px; max-height: 380px; overflow: auto; }
+.out-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel-2);
+}
+.out-row:hover { border-color: var(--line-strong); }
+.out-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.out-main b {
+  font-size: 12px; font-weight: 500; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.out-main span { font-size: 10.5px; color: var(--text-3); }
