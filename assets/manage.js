@@ -1310,13 +1310,15 @@
             <div class="section-title">支持作者<span></span></div>
             <p class="hint" style="margin:0 0 12px;line-height:1.8">如果 Loom 让你的 AI 创作更顺畅、帮你省下了折腾环境的时间，欢迎请作者喝杯咖啡 —— 这是开源路上最温暖的动力。</p>
             <div style="display:flex;gap:10px">
-              <figure style="flex:1;margin:0;text-align:center;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 8px">
-                <img src="assets/donate-wechat.jpg" alt="微信支付收款码" style="width:100%;border-radius:8px;display:block">
-                <figcaption style="font-size:11.5px;color:var(--text-2);margin-top:7px">微信支付</figcaption>
+              <figure style="flex:1;margin:0;text-align:center;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden">
+                <div style="background:#07C160;color:#fff;font-size:12px;font-weight:600;padding:7px 0">微信支付</div>
+                <img src="assets/donate-wechat.png" alt="微信支付收款码" style="width:100%;display:block;background:#fff">
+                <figcaption style="font-size:11.5px;color:var(--text-2);padding:7px 0">扫码请作者喝咖啡</figcaption>
               </figure>
-              <figure style="flex:1;margin:0;text-align:center;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 8px">
-                <img src="assets/donate-alipay.jpg" alt="支付宝收款码" style="width:100%;border-radius:8px;display:block">
-                <figcaption style="font-size:11.5px;color:var(--text-2);margin-top:7px">支付宝</figcaption>
+              <figure style="flex:1;margin:0;text-align:center;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden">
+                <div style="background:#1677FF;color:#fff;font-size:12px;font-weight:600;padding:7px 0">支付宝</div>
+                <img src="assets/donate-alipay.png" alt="支付宝收款码" style="width:100%;display:block;background:#fff">
+                <figcaption style="font-size:11.5px;color:var(--text-2);padding:7px 0">扫码请作者喝咖啡</figcaption>
               </figure>
             </div>
             <p class="hint" style="margin:10px 0 0;font-size:11px">扫码即可 · 金额随意，没预算也没关系，用得开心就好</p>
