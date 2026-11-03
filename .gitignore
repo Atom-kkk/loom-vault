@@ -3,12 +3,9 @@ __pycache__/
 *.pyc
 *.log
 
-# 参考库缩略图（约 42 MB，2906 张）
-# 元数据 reference/*.json 与 reference/data.js 已入库，
-# 克隆后跑 `python3 scripts/fetch_reference.py` 即可拉回来
-reference/outfits/
-reference/faces/
-reference/poses/
+# 参考库缩略图（4345 张，约 68 MB）已入库：
+# 这样克隆下来就能直接用，GitHub Pages 也不用在 CI 里现拉。
+# 想换源重拉：python3 scripts/fetch_reference_gcore.py（幂等，已有文件会跳过）
 reference/_failed.txt
 
 # 本地引擎状态（含路径/pid，属本机，不入库）

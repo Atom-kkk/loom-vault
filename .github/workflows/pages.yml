@@ -28,22 +28,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      # 参考库缩略图（约 68 MB / 4345 张）被 .gitignore 排除，仓库里没有。
-      # 发布前现拉一遍，否则线上的服饰 / 人脸 / 姿势三个库全是破图。
-      # 拉了失败也继续发：宁可库空着，也别整站发不出去。
-      - name: Fetch reference thumbnails
-        continue-on-error: true
-        run: python3 scripts/fetch_reference_gcore.py
-
-      - name: Report thumbnail count
+      # 缩略图已经在仓库里（4345 张 / 68 MB）。这里只做体检：
+      # 缺了就让流水线红掉，别把满是破图的站点发出去。
+      - name: Verify reference thumbnails
         run: |
+          fail=0
           for d in outfits faces poses; do
-            printf '%-10s %s\n' "$d" "$(ls reference/$d 2>/dev/null | wc -l)"
+            n=$(ls "reference/$d" 2>/dev/null | wc -l)
+            printf '%-10s %s\n' "$d" "$n"
+            [ "$n" -gt 0 ] || fail=1
           done
+          [ "$fail" -eq 0 ] || { echo "::error::参考图缩略图缺失，检查 reference/ 是否完整提交"; exit 1; }
 
       # 只挑站点需要的东西，别把 .git / node_modules / 测试 / 文档一起打进去
       - name: Stage site
