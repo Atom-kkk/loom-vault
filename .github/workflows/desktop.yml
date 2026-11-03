@@ -18,22 +18,25 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            name: macOS
-            script: dist:mac
-            artifact: Loom-macOS
+            name: macOS (Apple Silicon)
+            artifact: Loom-macOS-arm64
+            glob: |
+              desktop/dist/*-arm64.dmg
+              desktop/dist/*-arm64-mac.zip
+            build_cmd: npm run stage && npx electron-builder --mac --arm64
+          - os: macos-13
+            name: macOS (Intel)
+            artifact: Loom-macOS-x64
             glob: |
               desktop/dist/*.dmg
               desktop/dist/*.zip
-            build_cmd: npm run stage && npx electron-builder --mac --arm64
-            dump_cmd: cd desktop && npx electron-builder --mac --arm64 2>&1 | tail -60
+            build_cmd: npm run stage && npx electron-builder --mac --x64
           - os: windows-latest
             name: Windows
-            script: dist:win
             artifact: Loom-Windows
             glob: |
               desktop/dist/*.exe
             build_cmd: npm run stage && npx electron-builder --win --x64
-            dump_cmd: cd desktop && npx electron-builder --win --x64 2>&1 | tail -60
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
@@ -59,12 +62,8 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-        run: ${{ matrix.build_cmd }} 2>&1 | tee /tmp/build.log
-
-      # 构建挂了就把日志原样打出来，省得再去翻 Artifact
-      - name: Dump build log on failure
-        if: failure()
-        run: cat /tmp/build.log
+        run: ${{ matrix.build_cmd }}
+        shell: bash
 
       - uses: actions/upload-artifact@v4
         with:
