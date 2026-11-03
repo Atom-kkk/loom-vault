@@ -225,6 +225,13 @@
           });
           if (!ok) return;
           await DB.del('models', m.id);
+          // 自动登记的模型：记一笔，下次导入/启动不复活用户明确删掉的
+          if (m.auto) {
+            const st = await DB.getSettings().catch(() => ({}));
+            const gone = Array.isArray(st.autoModelDismissed) ? st.autoModelDismissed : [];
+            const key = String((m.files || [])[0] || m.name).replace(/\\/g, '/').split('/').pop();
+            if (!gone.includes(key)) await DB.setSetting('autoModelDismissed', [...gone, key]);
+          }
           await V.reload(); V.renderNav(); V.render();
           toast('已删除', 'ok');
         };
@@ -400,11 +407,55 @@
   /* ============================================================
      LoRA
      ============================================================ */
+  /* ---------------- LoRA：扫描引擎模型目录自动入库 ----------------
+     引擎在跑时（serve.py 起着即可），把 ComfyUI models/loras 下的文件
+     扫成 LoRA 卡片，按文件名去重；删除的自动条目记洞不复活。
+     进页面静默扫一次，工具条按钮随时手动再扫。 */
+  let loraScanned = false;
+  async function scanEngineLoras(silent) {
+    try {
+      const scan = await Comfy.scanModels();
+      const dir = scan.found && scan.found.loras;
+      if (!dir) throw new Error('没找到 LoRA 目录');
+      const list = await Comfy.listDir(dir);
+      const files = (list.entries || []).filter(e => !e.dir && /\.(safetensors|ckpt|pt|pth|gguf)$/i.test(e.name));
+      const st = await DB.getSettings().catch(() => ({}));
+      const dismissed = new Set(st.autoLoraDismissed || []);
+      const known = new Set(V.state.loras.map(l => String(l.fileName || '').replace(/\\/g, '/').split('/').pop()));
+      let added = 0;
+      for (const f of files) {
+        if (known.has(f.name) || dismissed.has(f.name)) continue;
+        await DB.put('loras', {
+          id: U.uid('lora'),
+          name: f.name.replace(/\.(safetensors|ckpt|pt|pth|gguf)$/i, ''),
+          baseModel: '', fileName: f.name,
+          downloadUrl: '', size: '', weight: '', triggerWords: '',
+          note: '引擎目录自动扫描：' + dir,
+          dir, auto: true, createdAt: Date.now()
+        });
+        known.add(f.name);
+        added++;
+      }
+      if (added) { await V.reload(); V.renderNav(); if (!silent) V.render(); }
+      if (!silent) toast(added ? `扫描完成：新增 ${added} 个 LoRA` : `扫描完成：目录里 ${files.length} 个都已入库`, 'ok');
+      return added;
+    } catch (e) {
+      if (!silent) toast('扫描失败：' + e.message + '（需要本地引擎已配置并启动，见「本地配置」）', 'err');
+      return null;
+    }
+  }
+  V.on('lora-scan', () => scanEngineLoras(false));
+
   V.registerView('loras', {
     title: 'LoRA',
     sub: () => `${V.state.loras.length} 个 LoRA · 记录基座、触发词与下载链接`,
-    actions: () => `<button class="btn primary" data-act="lora-new">${icon('plus', 15)} 添加 LoRA</button>`,
+    actions: () => `<button class="btn" data-act="lora-scan" title="扫描 ComfyUI 的 models/loras 目录，自动入库">${icon('spark', 15)} 扫描引擎目录</button>
+      <button class="btn primary" data-act="lora-new">${icon('plus', 15)} 添加 LoRA</button>`,
     render: async (c) => {
+      if (!loraScanned) {
+        loraScanned = true;
+        scanEngineLoras(true).then(n => { if (n) V.render(); });
+      }
       if (!V.state.loras.length) {
         c.innerHTML = `<div class="empty">${icon('layers', 40)}<b>还没有 LoRA</b>
           <p>把常用的风格 / 人物 LoRA 记进来：基座、触发词、下载链接、放置目录。<br>入库图片时会自动关联。</p></div>`;
@@ -445,6 +496,13 @@
     const ok = await confirmDialog({ title: '删除 LoRA？', message: `「${l.name}」会从 LoRA 库移除，已入库图片里的名字保留。`, danger: true, okText: '删除' });
     if (!ok) return;
     await DB.del('loras', l.id);
+    // 自动扫描进来的：记一笔，下次扫描不复活
+    if (l && l.auto) {
+      const st = await DB.getSettings().catch(() => ({}));
+      const gone = Array.isArray(st.autoLoraDismissed) ? st.autoLoraDismissed : [];
+      const key = String(l.fileName || l.name).replace(/\\/g, '/').split('/').pop();
+      if (!gone.includes(key)) await DB.setSetting('autoLoraDismissed', [...gone, key]);
+    }
     await V.reload(); V.renderNav(); V.render();
     toast('已删除', 'ok');
   });
@@ -590,7 +648,9 @@
         createdAt: Date.now()
       };
       await DB.put('workflows', wf);
-      toast(`已导入 ${wf.name}（${nodes} 节点）`, 'ok');
+      // 工作流引用的基座自动登记进模型库（本地模型不用再手动加）
+      const reg = await V.autoRegisterWorkflowModels(wf.id, wf.content).catch(() => null);
+      toast(`已导入 ${wf.name}（${nodes} 节点）${reg && reg.created ? `，自动登记 ${reg.created} 个模型` : ''}`, 'ok');
     } catch (e) {
       toast('导入失败：' + e.message, 'err');
     }
@@ -613,6 +673,7 @@
         createdAt: Date.now()
       };
       await DB.put('workflows', apiWf);
+      await V.autoRegisterWorkflowModels(apiWf.id, apiWf.content).catch(() => {});
       await V.reload();
       V.renderNav();
       V.render();
@@ -775,56 +836,75 @@
   });
 
   /* ============================================================
-     分类
+     分类管理 —— 入口在图库工具条（原「管理 → 分类」独立页已并入）
      ============================================================ */
-  V.registerView('categories', {
-    title: '分类',
-    sub: () => `${V.state.categories.length} 个分类 · 编号按分类前缀自动续号`,
-    actions: () => `<button class="btn primary" data-act="cat-new">${icon('plus', 15)} 新建分类</button>`,
-    render: async (c) => {
+  function categoriesModal() {
+    let box = null;
+    const paint = () => {
       const rows = V.state.categories.map(cat => {
-        const n = V.state.images.filter(i => i.categoryId === cat.id).length;
-        const seq = Math.max(0, ...V.state.images.filter(i => i.categoryId === cat.id)
-          .map(i => Number(String(i.id).split('-').pop()) || 0));
+        const imgs = V.state.images.filter(i => i.categoryId === cat.id);
+        const seq = Math.max(0, ...imgs.map(i => Number(String(i.id).split('-').pop()) || 0));
         return `<tr>
           <td><span class="dot" style="display:inline-block;width:9px;height:9px;border-radius:99px;background:${cat.color || 'var(--text-3)'};margin-right:8px"></span>${esc(cat.name)}</td>
           <td class="mono">${esc(cat.prefix)}-${U.pad(seq, 4)}</td>
-          <td>${n}</td>
-          <td><button class="btn sm ghost" data-act="cat-edit" data-id="${cat.id}">编辑</button>
-              <button class="btn sm ghost" data-act="cat-del" data-id="${cat.id}">删除</button></td>
+          <td>${imgs.length}</td>
+          <td><button class="btn sm ghost" data-cedit="${cat.id}">编辑</button>
+              <button class="btn sm ghost" data-cdel="${cat.id}">删除</button></td>
         </tr>`;
       }).join('');
-      c.innerHTML = `<table class="file-table" style="background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden">
-        <thead><tr><th>分类</th><th style="width:160px">下一个编号</th><th style="width:80px">图片数</th><th style="width:140px">操作</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-      <p class="hint" style="margin-top:12px">编号规则：<code class="mono">前缀-四位序号</code>，按分类独立计数，删除图片不回收编号。</p>`;
-    }
-  });
+      box.querySelector('#cat-rows').innerHTML = rows;
+    };
+    const del = async (id) => {
+      const cat = V.state.categories.find(c => c.id === id);
+      const n = V.state.images.filter(i => i.categoryId === cat.id).length;
+      if (V.state.categories.length <= 1) return toast('至少保留一个分类', 'err');
+      const fallback = V.state.categories.find(c => c.id !== cat.id);
+      const ok = await confirmDialog({
+        title: '删除分类？',
+        message: n ? `「${cat.name}」下还有 ${n} 张图，删除后这些图会移到「${fallback.name}」，图片本身不会丢。` : `「${cat.name}」将被删除。`,
+        danger: true, okText: '删除'
+      });
+      if (!ok) return;
+      for (const img of V.state.images.filter(i => i.categoryId === cat.id)) {
+        img.categoryId = fallback.id;
+        await DB.saveImage(img);
+      }
+      await DB.del('categories', cat.id);
+      await V.reload();
+      V.renderNav();
+      paint();
+      toast('已删除', 'ok');
+    };
+    openModal({
+      title: '分类管理',
+      sub: '编号按分类前缀自动续号，删除分类不会丢图（会挪到下一个分类）',
+      body: `<table class="file-table" style="background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden">
+          <thead><tr><th>分类</th><th style="width:160px">下一个编号</th><th style="width:80px">图片数</th><th style="width:140px">操作</th></tr></thead>
+          <tbody id="cat-rows"></tbody>
+        </table>
+        <p class="hint" style="margin-top:12px">编号规则：<code class="mono">前缀-四位序号</code>，按分类独立计数，删除图片不回收编号。</p>`,
+      footer: `<button class="btn" data-close>关闭</button>
+               <div class="spacer"></div>
+               <button class="btn primary" id="cat-newbtn">新建分类</button>`,
+      onMount: (b) => {
+        box = b;
+        paint();
+        b.querySelector('#cat-newbtn').onclick = () => catForm(null, paint);
+        b.addEventListener('click', e => {
+          const ed = e.target.closest('[data-cedit]');
+          const de = e.target.closest('[data-cdel]');
+          if (ed) catForm(V.state.categories.find(c => c.id === ed.dataset.cedit), paint);
+          if (de) del(de.dataset.cdel);
+        });
+      }
+    });
+  }
+  V.on('open-cats', () => categoriesModal());
+  V.categoriesModal = categoriesModal;
 
   V.on('cat-new', () => catForm(null));
-  V.on('cat-edit', el => catForm(V.state.categories.find(c => c.id === el.dataset.id)));
-  V.on('cat-del', async el => {
-    const cat = V.state.categories.find(c => c.id === el.dataset.id);
-    const n = V.state.images.filter(i => i.categoryId === cat.id).length;
-    if (V.state.categories.length <= 1) return toast('至少保留一个分类', 'err');
-    const fallback = V.state.categories.find(c => c.id !== cat.id);
-    const ok = await confirmDialog({
-      title: '删除分类？',
-      message: n ? `「${cat.name}」下还有 ${n} 张图，删除后这些图会移到「${fallback.name}」，图片本身不会丢。` : `「${cat.name}」将被删除。`,
-      danger: true, okText: '删除'
-    });
-    if (!ok) return;
-    for (const img of V.state.images.filter(i => i.categoryId === cat.id)) {
-      img.categoryId = fallback.id;
-      await DB.saveImage(img);
-    }
-    await DB.del('categories', cat.id);
-    await V.reload(); V.renderNav(); V.render();
-    toast('已删除', 'ok');
-  });
 
-  function catForm(cat) {
+  function catForm(cat, onSaved) {
     const isNew = !cat;
     cat = cat || {};
     const colors = ['#c08a7d', '#b9775e', '#b99455', '#8a9464', '#8b9aa6', '#9c8aa5', '#a39b91', '#6f665c'];
@@ -857,6 +937,7 @@
           await DB.put('categories', obj);
           close();
           await V.reload(); V.renderNav(); V.render();
+          if (typeof onSaved === 'function') onSaved();   // 分类管理弹窗开着时刷新表格
           toast('已保存', 'ok');
         };
       }
