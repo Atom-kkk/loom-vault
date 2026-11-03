@@ -64,20 +64,14 @@
       <button class="btn" data-act="model-export-all">${icon('down', 15)} 导出全部清单</button>
       <button class="btn primary" data-act="model-new">${icon('plus', 15)} 添加模型</button>`,
     render: async (c) => {
-      const tab = V.state.filter.modelTab || 'all';
-      const list = V.state.models.filter(m => tab === 'all' || m.type === tab);
-      c.innerHTML = `
-        <div class="chips" style="margin-bottom:16px">
-          <button class="chip ${tab === 'all' ? 'active' : ''}" data-act="model-tab" data-tab="all">全部 <span class="n">${V.state.models.length}</span></button>
-          <button class="chip ${tab === 'cloud' ? 'active' : ''}" data-act="model-tab" data-tab="cloud">云端 <span class="n">${V.state.models.filter(m => m.type === 'cloud').length}</span></button>
-          <button class="chip ${tab === 'local' ? 'active' : ''}" data-act="model-tab" data-tab="local">本地 <span class="n">${V.state.models.filter(m => m.type === 'local').length}</span></button>
-        </div>
-        ${list.length ? `<div class="model-grid">${list.map(modelCard).join('')}</div>`
-          : `<div class="empty">${icon('cpu', 40)}<b>还没有模型</b><p>点右上角「添加模型」，把常用的云端模型和本地 ComfyUI 部署都登记进来。</p></div>`}`;
+      // 本地基座不再入库（文件名显示在工作流卡片上），这里只有外接 API 的云端模型
+      const list = V.state.models.filter(m => m.type !== 'local');
+      c.innerHTML = list.length
+        ? `<div class="model-grid">${list.map(modelCard).join('')}</div>`
+        : `<div class="empty">${icon('cpu', 40)}<b>还没有云端模型</b><p>点右上角「添加模型」，选一个预设填上 Key 就能在画布直接出图。</p></div>`;
     }
   });
 
-  V.on('model-tab', el => { V.state.filter.modelTab = el.dataset.tab; V.render(); });
   V.on('model-new', () => modelForm(null));
   V.on('model-open', el => modelDetail(el.dataset.id));
   V.on('model-export-all', () => exportAllManifests());
@@ -131,45 +125,26 @@
 
     openModal({
       title: isNew ? '添加模型' : '编辑模型',
-      sub: '云端模型记访问方式；本地模型记 ComfyUI 地址、基座与全部部署文件',
+      sub: '选一个预设填上 Key 就能在画布直接出图；Key 只存在本机',
       wide: true,
       body: `
         <div class="form-grid">
           <div class="field"><label>模型名称 *</label>
-            <input type="text" id="m-name" value="${esc(m.name || '')}" placeholder="krea2 / GPT Image 2.5 / Flux.1 dev"></div>
-          <div class="field"><label>类型</label>
-            <div class="seg" id="m-type">
-              <button data-t="cloud" class="${m.type !== 'local' ? 'active' : ''}">云端 API</button>
-              <button data-t="local" class="${m.type === 'local' ? 'active' : ''}">本地部署</button>
-            </div>
-          </div>
+            <input type="text" id="m-name" value="${esc(m.name || '')}" placeholder="GPT Image 1 / CogView-4 / Flux.1 dev"></div>
           <div class="field"><label>平台 / 服务商</label>
-            <input type="text" id="m-platform" value="${esc(m.platform || '')}" placeholder="OpenAI / ComfyUI / 即梦 / 自建">
+            <input type="text" id="m-platform" value="${esc(m.platform || '')}" placeholder="OpenAI / 智谱 / 即梦 / 中转站">
           </div>
           <div class="field"><label>基座 / 系列</label>
-            <input type="text" id="m-base" value="${esc(m.base || '')}" placeholder="krea2 / SDXL / Flux.1 / gpt-image"></div>
+            <input type="text" id="m-base" value="${esc(m.base || '')}" placeholder="gpt-image / cogview / flux"></div>
           <div class="field"><label>版本</label>
             <input type="text" id="m-version" value="${esc(m.version || '')}" placeholder="v1.0 / fp16"></div>
-          <div class="field"><label>访问方式（云端）</label>
-            <input type="text" id="m-access" value="${esc(m.access || '')}" placeholder="网页 / API / 本地接口"></div>
+          <div class="field"><label>访问方式</label>
+            <input type="text" id="m-access" value="${esc(m.access || '')}" placeholder="API / 网页"></div>
           <div class="field full"><label>说明</label>
             <textarea id="m-desc" style="min-height:60px">${esc(m.desc || '')}</textarea></div>
-
-          <div class="field full local-only"><label>ComfyUI 服务地址</label>
-            <input type="text" id="m-endpoint" value="${esc(m.endpoint || '')}" placeholder="http://127.0.0.1:8188">
-            <span class="hint">本地跑 ComfyUI 时默认 8188；填了以后可以在这里一键打开。</span></div>
-          <div class="field full local-only"><label>模型放置根目录</label>
-            <input type="text" id="m-install" value="${esc(m.installPath || '')}" placeholder="ComfyUI/models/checkpoints"></div>
         </div>
 
-        <div class="section local-only">
-          <div class="section-title">部署文件清单<span></span></div>
-          <p class="hint" style="margin:0 0 9px">主模型、LoRA、VAE、CLIP、ControlNet…… 每个文件一行，填下载链接。导出时会生成完整的部署清单和下载脚本。</p>
-          <div id="m-files">${(m.files || []).map(fileRow).join('')}</div>
-          <button class="btn sm" id="m-add-file">${icon('plus', 13)} 添加文件</button>
-        </div>
-
-        <div class="section cloud-only">
+        <div class="section">
           <div class="section-title">云端接入<span></span></div>
           <p class="hint" style="margin:0 0 9px">选一个预设自动填好接口和模型名；中转站选最后一项，填中转站地址（带 /v1）和它要求的模型名。Key 只存在本机浏览器里。</p>
           <div class="chips" id="m-cloud-presets" style="margin-bottom:12px">
@@ -200,20 +175,6 @@
                <button class="btn" data-close>取消</button>
                <button class="btn primary" id="m-save">保存</button>`,
       onMount: (box, close) => {
-        let type = m.type || 'local';
-        const syncType = () => {
-          box.querySelectorAll('.local-only').forEach(e => e.style.display = type === 'local' ? '' : 'none');
-          box.querySelectorAll('.cloud-only').forEach(e => e.style.display = type === 'cloud' ? '' : 'none');
-        };
-        box.querySelectorAll('#m-type button').forEach(b => {
-          b.onclick = () => {
-            type = b.dataset.t;
-            box.querySelectorAll('#m-type button').forEach(x => x.classList.toggle('active', x === b));
-            syncType();
-          };
-        });
-        syncType();
-
         // 云端预设：点一下自动填接口 / 模型名 / 形态 / 服务商（新模型名称为空时连名字一起填）
         box.querySelectorAll('#m-cloud-presets .chip').forEach(ch => {
           ch.onclick = () => {
@@ -244,13 +205,10 @@
           }
         };
 
-        const filesWrap = box.querySelector('#m-files');
-        bindFileRows(filesWrap, box.querySelector('#m-add-file'));
-
         box.querySelector('#m-save').onclick = async () => {
           const name = box.querySelector('#m-name').value.trim();
           if (!name) return toast('模型名称不能为空', 'err');
-          if (type === 'cloud' && !box.querySelector('#m-api-base').value.trim()) {
+          if (!box.querySelector('#m-api-base').value.trim()) {
             return toast('云端模型要填接口地址（或点一个预设自动填）', 'err');
           }
           const obj = {
@@ -292,12 +250,11 @@
           });
           if (!ok) return;
           await DB.del('models', m.id);
-          // 自动登记的模型：记一笔，下次导入/启动不复活用户明确删掉的
-          if (m.auto) {
+          // 预置的云端模型：记一笔，下次启动不复活用户明确删掉的
+          if (m.builtin) {
             const st = await DB.getSettings().catch(() => ({}));
             const gone = Array.isArray(st.autoModelDismissed) ? st.autoModelDismissed : [];
-            const key = String((m.files || [])[0] || m.name).replace(/\\/g, '/').split('/').pop();
-            if (!gone.includes(key)) await DB.setSetting('autoModelDismissed', [...gone, key]);
+            if (!gone.includes(m.id)) await DB.setSetting('autoModelDismissed', [...gone, m.id]);
           }
           await V.reload(); V.renderNav(); V.render();
           toast('已删除', 'ok');
@@ -715,9 +672,7 @@
         createdAt: Date.now()
       };
       await DB.put('workflows', wf);
-      // 工作流引用的基座自动登记进模型库（本地模型不用再手动加）
-      const reg = await V.autoRegisterWorkflowModels(wf.id, wf.content).catch(() => null);
-      toast(`已导入 ${wf.name}（${nodes} 节点）${reg && reg.created ? `，自动登记 ${reg.created} 个模型` : ''}`, 'ok');
+      toast(`已导入 ${wf.name}（${nodes} 节点）`, 'ok');
     } catch (e) {
       toast('导入失败：' + e.message, 'err');
     }
@@ -740,7 +695,6 @@
         createdAt: Date.now()
       };
       await DB.put('workflows', apiWf);
-      await V.autoRegisterWorkflowModels(apiWf.id, apiWf.content).catch(() => {});
       await V.reload();
       V.renderNav();
       V.render();

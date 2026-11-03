@@ -324,27 +324,7 @@ window.DB = (function () {
         id: U.uid('cat'), ...c, seq: 0, order: i, createdAt: now
       })));
     }
-    const m = await getAll('models');
-    if (!m.length) {
-      await bulkPut('models', [
-        {
-          id: U.uid('mdl'), name: 'GPT Image 2.5', type: 'cloud',
-          platform: 'OpenAI', base: '', version: '2.5', vendor: 'OpenAI',
-          desc: 'OpenAI 图像模型，擅长指令遵循与文字渲染。',
-          access: '网页 / API', files: [], loraIds: [], workflowIds: [],
-          createdAt: Date.now()
-        },
-        {
-          id: U.uid('mdl'), name: 'krea2', type: 'local',
-          platform: 'ComfyUI', base: 'krea2', version: 'v1',
-          endpoint: 'http://127.0.0.1:8188',
-          installPath: 'ComfyUI/models/checkpoints',
-          desc: '本地 ComfyUI 部署的 krea2 基座，配合 LoRA 出图。',
-          files: [], loraIds: [], workflowIds: [],
-          createdAt: Date.now()
-        }
-      ]);
-    }
+    // 模型预置迁移到 app.js 的 migrateModelsToCloud()（只预置云端 API，Key 留给用户填）
   }
 
   return {

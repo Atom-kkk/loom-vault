@@ -1398,12 +1398,7 @@ window.Vault = (function () {
     await DB.ensureSeed();
     if (window.BUILTIN) await BUILTIN.seed().catch(() => {});
     await reload();
-    // 内置工作流引用的基座自动登记进模型库（升级补种的老用户也走这里；删过的靠洞名单不复活）
-    if (window.BUILTIN) {
-      for (const w of state.workflows.filter(x => x.builtin)) {
-        await autoRegisterWorkflowModels(w.id, w.content).catch(() => {});
-      }
-    }
+    await migrateModelsToCloud().catch(() => {});
     await AI.load();
     bindGlobal();
     renderNav();
@@ -1423,78 +1418,40 @@ window.Vault = (function () {
 
   /* ---------------- 对外 ---------------- */
   /* ============================================================
-     工作流 → 模型库自动登记
-     导入工作流时，把里面 UNET / Checkpoint 加载器引用的基座文件自动
-     登记成本地模型（按文件名去重），并把工作流挂到模型卡上。
-     本地模型从此不用手动维护 —— 导入流就长出来。
-     用户删掉的自动登记不复活（autoModelDismissed 记文件名）。
+     云端模型页只放云端 API 模型
+     · 一次性迁移：清掉旧的本地基座登记（基座文件名显示在工作流卡片上，
+       不再单独入库），预置主流云端模型（只差用户填 Key）
+     · 用户删掉的预置卡不复活（autoModelDismissed 记 id）
      ============================================================ */
-  function wfModelFiles(content) {
-    let j;
-    try { j = JSON.parse(content); } catch { return []; }
-    const out = new Set();
-    const add = v => {
-      const s = String(v || '').trim();
-      if (s && /\.(safetensors|ckpt|sft|gguf|pt|pth)$/i.test(s)) out.add(s);
-    };
-    if (j && Array.isArray(j.nodes)) {
-      // UI 格式：模型加载器的文件名都摆在第一个 widget 位
-      for (const n of j.nodes) {
-        const t = String(n.type || '');
-        if (/unet|checkpoint/i.test(t)) add((n.widgets_values || [])[0]);
-      }
-    } else if (j && typeof j === 'object') {
-      // API 格式：认加载器节点上真正的模型输入名（LoraLoader 的 lora_name 不在此列）
-      for (const n of Object.values(j)) {
-        if (!n || !n.inputs) continue;
-        if (!/loader/i.test(String(n.class_type || ''))) continue;
-        add(n.inputs.unet_name || n.inputs.ckpt_name || n.inputs.model_name);
-      }
-    }
-    return [...out];
-  }
-
-  async function autoRegisterWorkflowModels(wfId, content) {
-    const files = wfModelFiles(content);
-    if (!files.length) return { created: 0, linked: 0 };
+  async function migrateModelsToCloud() {
     const st = await DB.getSettings().catch(() => ({}));
+    if (st.modelsCloudOnly) return;
+    for (const m of state.models.slice()) await DB.del('models', m.id);
     const dismissed = new Set(st.autoModelDismissed || []);
-    let created = 0;
-    for (const file of files) {
-      const key = String(file).replace(/\\/g, '/').split('/').pop();
-      if (dismissed.has(key)) continue;
-      const bare = key.replace(/\.(safetensors|ckpt|sft|gguf|pt|pth)$/i, '');
-      let m = state.models.find(x => x.type === 'local' && (
-        (x.files || []).some(f => String(f).replace(/\\/g, '/').split('/').pop() === key) ||
-        String(x.base || x.name) === bare
-      ));
-      if (!m) {
-        m = {
-          id: U.uid('m'),
-          name: bare,
-          type: 'local', platform: 'ComfyUI',
-          base: bare, version: '', access: '本地引擎',
-          desc: '导入工作流时自动登记，说明可以在卡片里补。',
-          files: [file], loraIds: [], workflowIds: [],
-          auto: true, createdAt: Date.now()
-        };
-        await DB.put('models', m);
-        state.models.push(m);
-        created++;
-      }
-      if (wfId && !(m.workflowIds || []).includes(wfId)) {
-        m.workflowIds = [...(m.workflowIds || []), wfId];
-        await DB.put('models', m);
-      }
+    let added = 0;
+    for (const p of (window.Cloud ? Cloud.CLOUD_PRESETS : [])) {
+      if (p.key === 'relay') continue;          // 中转站要用户自己填地址，不预置空卡
+      const id = 'cloud-' + p.key;
+      if (dismissed.has(id)) continue;
+      await DB.put('models', {
+        id, name: p.name, type: 'cloud',
+        platform: p.vendor, base: (p.model || '').split('/').pop(), version: '',
+        access: 'API', desc: p.note || '',
+        apiBase: p.base, apiModel: p.model, shape: p.shape, size: '',
+        loraIds: [], workflowIds: [], builtin: true,
+        createdAt: Date.now()
+      });
+      added++;
     }
-    if (created) renderNav();
-    return { created, linked: files.length };
+    await DB.setSetting('modelsCloudOnly', true);
+    await reload();
+    if (added) renderNav();
   }
 
   return {
     state, toast, icon, openModal, confirmDialog, go, render, reload, renderNav,
     registerView, on, blobURL, dropURL, activePrompt, catOf, modelOf,
-    addVersion, newVersion, sourceLabel, boot, autoRegisterWorkflowModels,
+    addVersion, newVersion, sourceLabel, boot,
     get $() { return $; }, get $$() { return $$; },
     matchModelId, matchLoraId, editImageModal, handleFiles, openLightbox,
   };
