@@ -189,7 +189,7 @@ try {
     const mk = (id, type, x, y, w, data) => ({ id, type, x, y, w, data });
     cvs.nodes.push(mk('p1', 'prompt', 60, 60, 260, { role:'正向', text:'采用特写镜头从第一人称主观视角斜侧方平视拍摄，浅景深将车窗外流动的街灯光斑虚化为绚丽暗色块。' }));
     cvs.nodes.push(mk('n1', 'prompt', 60, 240, 260, { role:'负向', text:'马赛克, 低清, 变形的手, 多余的手指' }));
-    cvs.nodes.push(mk('g1', 'gen', 380, 90, 320, {
+    cvs.nodes.push(mk('g1', 'gen', 380, 90, 356, {
       workflowId: wf.id, wfName: wf.name, status:'idle', statusText:'', batch:1, imageSlots:0
     }));
     cvs.edges.push({ from:'p1', to:'g1' }, { from:'n1', to:'g1' });

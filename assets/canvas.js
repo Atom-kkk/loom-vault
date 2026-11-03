@@ -399,11 +399,12 @@ window.Canvas = (function () {
           ? `<div class="cv-prog"><i style="width:${Math.min(100, Math.max(2, Math.round(n.data.prog.step / Math.max(1, n.data.prog.total) * 100)))}%"></i></div>`
           : ''}
         ${n.data.statusText ? `<div class="cv-gen-status ${st}">${esc(n.data.statusText)}</div>` : ''}
-        <button class="cv-run" data-cvnode="run" ${st === 'running' ? 'disabled' : ''}>
-          ${st === 'running' ? '<span class="spinner"></span> 生成中' : '生成'}
-        </button>
-        ${st === 'running' ? '<button class="cv-cancel" data-cvnode="cancel">取消</button>' : ''}
-        ${st === 'error' ? '<button class="cv-cancel retry" data-cvnode="retry">重试</button>' : ''}`;
+        ${st === 'error'
+          ? `<button class="cv-run retry" data-cvnode="retry">重试</button>`
+          : `<button class="cv-run" data-cvnode="run" ${st === 'running' ? 'disabled' : ''}>
+               ${st === 'running' ? '<span class="spinner"></span> 生成中' : '生成'}
+             </button>`}
+        ${st === 'running' ? '<button class="cv-cancel" data-cvnode="cancel">取消</button>' : ''}`;
     } else if (n.type === 'simple') {
       const st = n.data.status || 'idle';
       const slots = n.data.imageSlots || 0;
@@ -426,11 +427,12 @@ window.Canvas = (function () {
         ${batchRow(n)}
         ${st === 'running' && n.data.prog ? `<div class="cv-prog"><i style="width:${pct}%"></i></div>` : ''}
         ${n.data.statusText ? `<div class="cv-gen-status ${st}">${esc(n.data.statusText)}</div>` : ''}
-        <button class="cv-run" data-cvnode="run" ${st === 'running' ? 'disabled' : ''}>
-          ${st === 'running' ? '<span class="spinner"></span> 生成中' : '生成'}
-        </button>
-        ${st === 'running' ? '<button class="cv-cancel" data-cvnode="cancel">取消</button>' : ''}
-        ${st === 'error' ? '<button class="cv-cancel retry" data-cvnode="retry">重试</button>' : ''}`;
+        ${st === 'error'
+          ? `<button class="cv-run retry" data-cvnode="retry">重试</button>`
+          : `<button class="cv-run" data-cvnode="run" ${st === 'running' ? 'disabled' : ''}>
+               ${st === 'running' ? '<span class="spinner"></span> 生成中' : '生成'}
+             </button>`}
+        ${st === 'running' ? '<button class="cv-cancel" data-cvnode="cancel">取消</button>' : ''}`;
     } else if (n.type === 'group') {
       const items = groupItems(n);
       const act = Math.min(items.length - 1, Math.max(0, Number(n.data.active) || 0));
@@ -1542,8 +1544,8 @@ window.Canvas = (function () {
       prompt: { w: 320, data: { text: '', role: '正向' } },
       image: { w: 260, data: { src: '', label: '图片' } },
       ref: { w: 220, data: { src: '', label: '参考图' } },
-      gen: { w: 320, data: { wfName: '', model: '', status: 'idle', statusText: '' } },
-      simple: { w: 300, data: { wfName: '', text: '', neg: '', src: '', imageSlots: 0, status: 'idle', statusText: '' } },
+      gen: { w: 356, data: { wfName: '', model: '', status: 'idle', statusText: '' } },
+      simple: { w: 330, data: { wfName: '', text: '', neg: '', src: '', imageSlots: 0, status: 'idle', statusText: '' } },
       wf: { w: 240, data: {} },
       group: { w: 300, data: { items: [], active: 0, label: '图片组' } }
     }[type];

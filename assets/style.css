@@ -920,6 +920,8 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
 }
 .cv-gen-meta:hover { color: var(--text); }
 .cv-gen-meta span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cv-gen-meta span:first-child { flex: 1 1 auto; min-width: 0; }
+.cv-gen-meta span:last-child { flex: 0 1 auto; max-width: 58%; }
 .cv-gen-status {
   padding: 0 11px 8px;
   font-size: 11.5px; color: var(--text-2);
@@ -928,11 +930,19 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
   font-variant-numeric: tabular-nums;
   word-break: break-word;
 }
-.cv-gen-status.error { color: var(--danger); }
+.cv-gen-status.error {
+  color: var(--danger);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 .cv-gen-status.done { color: var(--ok); }
 .cv-run {
-  display: block; width: calc(100% - 16px);
-  margin: 2px 8px 10px;
+  display: block;
+  /* 左右 11px 跟上面的尺寸 / 张数行对齐，8px 会差出一条边 */
+  width: calc(100% - 22px);
+  margin: 2px 11px 8px;
   height: 33px;
   border: none; border-radius: 8px;
   background: var(--accent); color: var(--accent-fg);
@@ -1878,7 +1888,7 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
 
 /* 画布生成节点的「取消」 */
 .cv-cancel {
-  width: 100%; margin-top: 6px; height: 26px;
+  width: calc(100% - 22px); margin: 0 11px 10px; height: 26px;
   border-radius: 8px;
   border: 1px solid var(--line-input);
   background: transparent;
@@ -1912,7 +1922,8 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
 /* 槽位徽章：工作流标了什么就显示什么 */
 .cv-slots {
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
-  margin: 2px 0 6px;
+  /* 左右 11px 跟 .cv-gen-meta / .cv-gen-status 对齐，否则控件像贴在边框上 */
+  margin: 2px 11px 6px;
 }
 .cv-slots i {
   font-style: normal; font-size: 9.5px; font-weight: 600;
@@ -1929,13 +1940,14 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
   font-size: 10px; color: var(--text-3);
   padding: 2px 7px; border-radius: 20px;
   background: var(--panel-2); border: 1px dashed var(--line-strong);
-  display: inline-block;
+  display: block; width: fit-content;
+  margin: 2px 11px 6px;
 }
 
 /* 批量张数 + 固定种子 */
 .cv-batch {
   display: flex; align-items: center; gap: 5px;
-  margin: 0 0 7px;
+  margin: 0 11px 7px;
   font-size: 10.5px; color: var(--text-3);
 }
 .cv-batch > span { margin-right: 1px; }
@@ -1964,7 +1976,7 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
 /* 出图尺寸行：只在工作流标了 width / height / duration 槽位时才出现 */
 .cv-size {
   display: flex; align-items: center; gap: 5px;
-  margin: 0 0 7px;
+  margin: 0 11px 7px;
   font-size: 10.5px; color: var(--text-3);
   flex-wrap: wrap; row-gap: 4px;
 }

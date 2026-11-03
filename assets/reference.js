@@ -188,6 +188,23 @@ window.REF = (function () {
   /* ============================================================
      数据加载
      ============================================================ */
+  // 缩略图 URL 的版本号。历史 bug：老版本 serve.py 把 404 也缓存 7 天，
+  // 图没下载完时打开过图库的人，浏览器里就留了一批「永久 404」，
+  // 之后图都在了还是满屏破图。改这个数字 = 全站缩略图换新地址，
+  // 谁都不用去手动清缓存。改了 serve.py 之后就不该再出现，但版本号留着当保险。
+  const THUMB_VER = '3';
+
+  function thumbUrl(u) {
+    if (!u) return u;
+    return u + (u.indexOf('?') >= 0 ? '&' : '?') + 'v=' + THUMB_VER;
+  }
+
+  function withThumbVersion(items) {
+    return (items || []).map(it => (it && it.thumb)
+      ? Object.assign({}, it, { thumb: thumbUrl(it.thumb) })
+      : it);
+  }
+
   async function load(kind) {
     const st = state[kind];
     if (st.items.length) return st;
@@ -196,14 +213,14 @@ window.REF = (function () {
       // 优先用内联数据：file:// 双击打开时 fetch 本地 JSON 会被拦
       if (window.REF_DATA && window.REF_DATA[kind]) {
         st.meta = window.REF_DATA[kind];
-        st.items = st.meta.items || [];
+        st.items = withThumbVersion(st.meta.items);
         return st;
       }
       const res = await fetch(`reference/${kind}.json`);
       if (!res.ok) throw new Error(`读取 reference/${kind}.json 失败`);
       const json = await res.json();
       st.meta = json;
-      st.items = json.items || [];
+      st.items = withThumbVersion(json.items);
       return st;
     })();
     return st.loading;

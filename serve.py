@@ -1551,16 +1551,37 @@ ENGINE = Engine()
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
+    # 默认是 HTTP/1.0：每个请求都得新建一条 TCP 连接。图库一屏 120 张缩略图、
+    # 往下滚还会继续加载，几百条短连接很容易把本机临时端口用光，
+    # 表现就是「一部分图怎么都加载不出来」。1.1 允许连接复用，这个问题就没了。
+    # 前提是每个响应都有 Content-Length（下面几个出口都设了）。
+    protocol_version = "HTTP/1.1"
+    timeout = 30
+
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=ROOT, **kw)
 
+    def send_response(self, code, message=None):
+        # 记下状态码，end_headers 要靠它决定能不能长缓存
+        self._status_code = code
+        super().send_response(code, message)
+
     def end_headers(self):
-        # 代码与页面禁用缓存（改完刷新即生效），图片与字体长缓存（2900+ 张参考图不要反复拉）
+        # 只有「真的拿到了内容」才给长缓存。
+        #
+        # 曾经这里不判状态码，结果 404 也被打上 max-age=604800 —— 参考缩略图还没
+        # 下载完时打开过图库，浏览器就把 404 记了 7 天；等到图都在了，它还是拿缓存里
+        # 那个 404，于是满屏破图，而且刷新也没用（缓存还没过期）。
+        # 现在：200/304 才长缓存，其余一律 no-store。
+        status = getattr(self, "_status_code", 200)
         path = self.path.split("?")[0].lower()
-        if path.endswith((".webp", ".png", ".jpg", ".jpeg", ".avif", ".gif", ".woff2")):
+        is_media = path.endswith((".webp", ".png", ".jpg", ".jpeg", ".avif", ".gif", ".woff2"))
+
+        if is_media and status in (200, 304):
             self.send_header("Cache-Control", "public, max-age=604800")
         else:
             self.send_header("Cache-Control", "no-store, must-revalidate")
+
         super().end_headers()
 
     def log_message(self, fmt, *args):

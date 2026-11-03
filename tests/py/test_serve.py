@@ -606,3 +606,63 @@ class TestSysPayload(EngineFixture):
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
+
+
+# ============================================================
+# 静态资源的缓存头
+# 曾经 404 也被打上 max-age=604800，浏览器把「图还没下载完时的 404」
+# 记了 7 天，之后图都在了还是满屏破图，刷新也没用。
+# ============================================================
+class TestCacheHeaders(unittest.TestCase):
+
+    def _headers(self, path, status):
+        h = serve.Handler.__new__(serve.Handler)   # 不建真实 socket
+        h.path = path
+        h._status_code = status
+        h.request_version = 'HTTP/1.1'
+        h._headers_buffer = []
+        h.send_header = lambda k, v: h._headers_buffer.append((k.lower(), v))
+        h.flush_headers = lambda: None
+        serve.Handler.end_headers(h)
+        return dict(h._headers_buffer)
+
+    def test_image_200_is_cached_long(self):
+        h = self._headers('/reference/outfits/SPR-0001.webp', 200)
+        self.assertIn('max-age=604800', h['cache-control'])
+
+    def test_image_304_keeps_long_cache(self):
+        h = self._headers('/reference/outfits/SPR-0001.webp', 304)
+        self.assertIn('max-age=604800', h['cache-control'])
+
+    def test_404_is_never_cached(self):
+        """关键回归：图片 404 绝不能长缓存，否则破了就再也刷不回来"""
+        for path in ('/reference/outfits/SPR-9999.webp',
+                     '/reference/faces/nope.jpg',
+                     '/assets/missing.js'):
+            h = self._headers(path, 404)
+            self.assertIn('no-store', h['cache-control'], path)
+            self.assertNotIn('max-age', h['cache-control'], path)
+
+    def test_500_is_never_cached(self):
+        h = self._headers('/reference/outfits/SPR-0001.webp', 500)
+        self.assertIn('no-store', h['cache-control'])
+
+    def test_code_files_are_not_cached(self):
+        h = self._headers('/assets/canvas.js', 200)
+        self.assertIn('no-store', h['cache-control'])
+
+    def test_send_response_records_status(self):
+        """end_headers 靠 self._status_code 判断，所以 send_response 必须记下来"""
+        h = serve.Handler.__new__(serve.Handler)
+        h._headers_buffer = []
+        h.request_version = 'HTTP/1.1'
+        h.log_request = lambda *a, **k: None
+        h.send_response(404)
+        self.assertEqual(h._status_code, 404)
+
+
+class TestProtocolVersion(unittest.TestCase):
+
+    def test_http_11_for_connection_reuse(self):
+        """HTTP/1.0 每个请求一条连接，几百张缩略图会把本机端口用光"""
+        self.assertEqual(serve.Handler.protocol_version, 'HTTP/1.1')
