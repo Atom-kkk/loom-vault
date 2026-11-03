@@ -23,20 +23,23 @@ jobs:
             glob: |
               desktop/dist/*-arm64.dmg
               desktop/dist/*-arm64-mac.zip
-            build_cmd: npm run stage && npx electron-builder --mac --arm64
+            build_cmd: npm run stage
+            eb_args: --mac --arm64
           - os: macos-13
             name: macOS (Intel)
             artifact: Loom-macOS-x64
             glob: |
               desktop/dist/*.dmg
               desktop/dist/*.zip
-            build_cmd: npm run stage && npx electron-builder --mac --x64
+            build_cmd: npm run stage
+            eb_args: --mac --x64
           - os: windows-latest
             name: Windows
             artifact: Loom-Windows
             glob: |
               desktop/dist/*.exe
-            build_cmd: npm run stage && npx electron-builder --win --x64
+            build_cmd: npm run stage
+            eb_args: --win --x64
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
@@ -71,8 +74,17 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-        run: ${{ matrix.build_cmd }}
+        run: bash -c 'npm run stage && npx electron-builder ${{ matrix.eb_args }} 2>&1 | tee build.log; exit ${PIPESTATUS[0]}'
         shell: bash
+
+      - name: Upload build log (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ matrix.artifact }}
+          path: desktop/build.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - uses: actions/upload-artifact@v4
         with:
