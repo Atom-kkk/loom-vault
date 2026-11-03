@@ -14,7 +14,8 @@ import threading
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-ROOT = "/Users/apple/WorkBuddy/2026-11-02-14-04-26/loom-vault"
+# 从脚本位置推项目根目录，别写死本机路径（CI / 别人克隆都要能跑）
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOST = "gcore.jsdelivr.net"
 
 # name -> (repo_path, remote_dir, ext, magic)
