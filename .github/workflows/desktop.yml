@@ -52,17 +52,19 @@ jobs:
 
       # 没买代码签名证书，明确关掉自动发现，否则 electron-builder 会去找钥匙串报错。
       # 只打当前 runner 架构，别让一台机器去下两个平台的 electron。
+      # electron 二进制从 GitHub 下载在 CI 里常超时，走 npmmirror 镜像更稳。
       - name: Build
         working-directory: desktop
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ${{ matrix.build_cmd }}
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+        run: ${{ matrix.build_cmd }} 2>&1 | tee /tmp/build.log
 
       # 构建挂了就把日志原样打出来，省得再去翻 Artifact
       - name: Dump build log on failure
         if: failure()
-        run: ${{ matrix.dump_cmd }}
+        run: cat /tmp/build.log
 
       - uses: actions/upload-artifact@v4
         with:
