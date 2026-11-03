@@ -16,7 +16,8 @@ window.AI = (function () {
       key: 'deepseek',
       label: 'DeepSeek',
       baseUrl: 'https://api.deepseek.com',
-      models: ['deepseek-chat', 'deepseek-reasoner'],
+      // 默认模型取数组第一项（agent.model 为空时回落到 models[0]，见 chat()）
+      models: ['deepseek-flash', 'deepseek-chat', 'deepseek-reasoner'],
       needKey: true,
       hint: '在 platform.deepseek.com 申请 Key，按 token 计费'
     },
@@ -237,7 +238,7 @@ window.AI = (function () {
       const prv = defaultProvider(legacy.baseUrl?.includes('bigmodel') ? 'zhipu' : 'deepseek', {
         baseUrl: legacy.baseUrl || 'https://api.deepseek.com',
         apiKey: legacy.apiKey || '',
-        models: [legacy.model || 'deepseek-chat'],
+        models: [legacy.model || 'deepseek-flash'],
         name: (legacy.baseUrl?.includes('bigmodel') ? '智谱 GLM' : 'DeepSeek') + '（旧配置）'
       });
       store.providers = [prv];

@@ -1149,6 +1149,28 @@ window.Comfy = (function () {
       out.slots[name] = entry;
     }
 
+    // 同节点身兼数槽：标题只标得出一个，但同一个节点上常挤着别的保留名输入
+    //（TextEncodeQwenImage21 把 prompt 和 negative_prompt 放在一个节点上，
+    //  KSampler 把 seed / steps / cfg / denoise 挤在一起）。
+    // 输入名恰好是保留名、值又是标量（不是连线）就一并认领；主循环已登记的
+    // 永远优先（先到先得），size 槽位自己会拆 width/height，这里不再碰。
+    for (const [id, node] of Object.entries(api || {})) {
+      if (!node || !node.inputs) continue;
+      const name = slotNameOf(node);
+      if (!name || name === 'size') continue;
+      for (const k of Object.keys(node.inputs)) {
+        if (k === name || !SLOT_SPEC[k]) continue;
+        const v = node.inputs[k];
+        if (typeof v !== 'string' && typeof v !== 'number') continue;   // 连线（数组）不是槽位
+        const entry = { id: id, field: k, name: k, class: node.class_type || '', value: v };
+        if (k === 'prompt' || k === 'negative_prompt') {
+          if (!out.slots[k]) out.slots[k] = entry;
+        } else if (NUM_SLOTS.indexOf(k) >= 0) {
+          if (!out.numbers[k]) out.numbers[k] = entry;
+        }
+      }
+    }
+
     // 参考图按编号排序：编号有意义（01 是主图）
     out.refs.sort(function (a, b) {
       return a.index - b.index || (Number(a.id) || 0) - (Number(b.id) || 0);
@@ -1177,6 +1199,20 @@ window.Comfy = (function () {
     if (n) parts.push(n + ' 个图位');
     if (slots.mask) parts.push('有遮罩位');
     return parts.join(' · ');
+  }
+
+  /** 从 API 工作流里删掉一个节点，并清掉所有指向它的输入（等价 ComfyUI 里 bypass） */
+  function muteNode(api, nodeId) {
+    if (!api[nodeId]) return;
+    delete api[nodeId];
+    Object.keys(api).forEach(function (nid) {
+      const inputs = api[nid] && api[nid].inputs;
+      if (!inputs) return;
+      Object.keys(inputs).forEach(function (k) {
+        const v = inputs[k];
+        if (Array.isArray(v) && String(v[0]) === String(nodeId)) delete inputs[k];
+      });
+    });
   }
 
   /**
@@ -1212,6 +1248,12 @@ window.Comfy = (function () {
       const imgRefs = slots.refs.filter(function (r) { return r.type === 'image'; });
       const used = Math.min(list.length, imgRefs.length);
       for (let i = 0; i < used; i++) write(imgRefs[i], list[i]);
+
+      // 没接图的 ref 槽位按 bypass 语义剔除：删掉对应的 LoadImage，并把指向它的
+      // 输入一并删掉（TextEncodeQwenImage21 / QwenImageEdit 把参考图做成可选的
+      // images.image_N，删了才合法）。留着不删就会拿工作流里的占位文件名去提交，
+      // 必报「value not in list」；被删的是必需输入时引擎会给出明确的校验错误。
+      for (let i = used; i < imgRefs.length; i++) muteNode(next, imgRefs[i].id);
 
       // 没有 ref_image 槽位但有 first_frame：第一张图当首帧（图生视频常见用法）
       if (!used && list[0] && slots.frames.first_frame) write(slots.frames.first_frame, list[0]);

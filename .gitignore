@@ -17,3 +17,17 @@ engine/
 
 # 测试缓存
 .pytest_cache/
+
+# ---- 桌面版构建产物（均可由脚本再生，不入库）----
+# electron 依赖：npm install 再生
+desktop/node_modules/
+# 安装包与解包产物：npm run dist:mac / dist:win 再生
+desktop/dist/
+# stage-web.mjs 的中间产物（网页文件副本，构建时从仓库根重新复制）
+desktop/staging/
+# 内置 standalone Python（约 67MB，二进制）：按 scripts/stage-web.mjs 的报错提示
+# 下载 python-build-standalone（macOS arm64 / win64 的 install_only 版）解压到 desktop/runtime/python
+desktop/runtime/
+
+# ZCode 会话本地配置
+.zcode/

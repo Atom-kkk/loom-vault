@@ -4,6 +4,40 @@
 
 ## [未发布]
 
+### 新增（内置工作流 ×2，来自 B 站的 古手梨花sama）
+
+- **Qwen-Image 2.1 单图/多图编辑总控**（10 个可选参考图位，图 1 固定为编辑目标）与
+  **MOSS-Image SFT 一键加速**（开关切 8 步 DMD / 50 步原始）。导出时转成 API 格式入库：
+  剔除 rgthree 标签 / 对比器等展示节点，`SaveImageAdvanced` 换成核心 `SaveImage`（API 输入名不稳），
+  Windows 反斜杠路径规范化，seed 置 -1 由 comfy.js 提交时随机
+- 槽位协议两个扩展（`comfy.js`）：
+  - **同节点身兼多槽**：标题只标得出一个，但 `TextEncodeQwenImage21` 把 prompt 和 negative_prompt
+    放在同一个节点、KSampler 把 seed/steps/cfg/denoise 挤在一起 —— 输入名恰好是保留名且值为标量
+    （非连线）就一并认领，标题标注永远优先
+  - **未接图的 ref 槽位按 bypass 语义剔除**：删掉对应 LoadImage 并清掉指向它的输入连线。
+    单图编辑时其余 9 个图位不再拿占位文件名去提交报「value not in list」；这些可选输入
+    （`shape: 7`）删了才合法，和作者在 ComfyUI 里把 LoadImage 静音是同一件事
+- 播种走版本门槛（builtinWfVersion = 6）：新用户三套全播，老库升级自动补种新条目；
+  删除内置工作流时记进 `wfBuiltinDismissed`，升级补种不复活用户明确删掉的
+- 测试：`tests/js/builtin.test.js` 覆盖播种 / 补种 / 删除不复活 / 两套工作流的槽位与提交改写
+
+### 新增（桌面版内置 Python）
+
+- 安装包内嵌 python-build-standalone 3.12（arm64）：main.js 优先用它跑 serve.py，
+  双击即用，不依赖用户装过 Python；首次启动复制到 userData（.app 包内只读）
+- 修掉打包映射断点：extraResources 把 `runtime/python` 直连到 `resources/python`
+  （之前 staging 会把它带进 resources/web/python，main.js 找不到，静默退回系统 Python）；
+  stage-web 检测不到内置 Python 时直接拒绝打包，不再静默降级
+
+### 新增（设置页 / 文档 / AI）
+
+- 设置页新增「硬件配置参考」：四档配置表（入门 / 基础 / 推荐 / 旗舰 × Windows / Mac）、
+  40/50 系显卡推荐、实测数据与 bug 反馈渠道；README 同步一节
+- DeepSeek 默认模型改为 `deepseek-flash`（旧 `deepseek-chat` / `deepseek-reasoner` 已于 2026-07 弃用），
+  旧配置迁移的兜底同步
+- README 修正：参考库缩略图（4345 张）已随仓库分发，删掉「克隆后需单独拉一次」的过时说明；
+  `.gitignore` 补上 desktop 构建产物（node_modules / dist / staging / runtime）
+
 ### 新增（桌面版 macOS / Windows）
 
 Electron 壳，双击即用，不再需要开终端、记端口。

@@ -53,7 +53,7 @@ function copyDir(src, dst) {
   }
 }
 
-/** 首次启动 / 升级后把网页资源同步到用户目录。返回是否真的复制了。 */
+/** 首次启动 / 升级后把网页资源同步到用户目录。返回 web 目录。 */
 function prepareWeb() {
   const dst = webDir();
   if (!app.isPackaged) return dst;
@@ -68,12 +68,53 @@ function prepareWeb() {
   return dst;
 }
 
+/** 把内置 standalone Python 从 resources 复制到 userData（.app 包内只读） */
+function prepareRuntime() {
+  if (!app.isPackaged) return;
+  const src = path.join(process.resourcesPath, 'python');
+  const dst = path.join(app.getPath('userData'), 'runtime', 'python');
+  if (!fs.existsSync(src)) return;                       // 没打进去就算了（退回系统 Python）
+  if (fs.existsSync(path.join(dst, 'bin'))) return;      // 已经复制过
+  copyDir(src, dst);
+}
+
 /* ------------------------------------------------------------
    Python 探测
+   优先级：① 随 App 打包进去的 standalone Python（无需用户装任何东西）
+          ② 系统里用户自己装的 Python 3.10+
    ------------------------------------------------------------ */
+
+/**
+ * 内置 Python 的位置。
+ * 打包后：extraResources 把 python-build-standalone 解压到 resources/python，
+ *         首次启动会连网页资源一起复制到 userData/runtime/python。
+ * 开发态：直接指到仓库 desktop/runtime/python。
+ */
+function bundledPython() {
+  const roots = app.isPackaged
+    ? [path.join(app.getPath('userData'), 'runtime', 'python'),
+       path.join(process.resourcesPath, 'python')]
+    : [path.join(__dirname, 'runtime', 'python')];
+  for (const r of roots) {
+    const exe = path.join(r, 'bin', IS_WIN ? 'python.exe' : 'python3');
+    if (fs.existsSync(exe)) return { cmd: exe, args: [], version: '', bundled: true };
+  }
+  return null;
+}
+
+// 系统 Python 候选：先命令名（吃到 PATH 里任何 3.10+），再绝对路径兜底。
+// 不要只写死 /usr/bin/python3 —— 那是 macOS 自带的 3.9，会把「有新版但不在
+// 默认路径」的用户误判成「没装」。
 const PY_CANDIDATES = IS_WIN
-  ? [['py', ['-3']], ['python', []], ['python3', []]]
-  : [['python3', []], ['/usr/bin/python3', []], ['/opt/homebrew/bin/python3', []], ['python', []]];
+  ? [['py', ['-3']], ['py', ['-3.12']], ['py', ['-3.11']], ['py', ['-3.10']],
+     ['python', []], ['python3', []]]
+  : [['python3', []], ['python', []],
+     '/opt/homebrew/bin/python3', '/usr/local/bin/python3',
+     '/opt/homebrew/bin/python', '/usr/local/bin/python',
+     '/Library/Frameworks/Python.framework/Versions/3.12/bin/python3',
+     '/Library/Frameworks/Python.framework/Versions/3.11/bin/python3',
+     '/Library/Frameworks/Python.framework/Versions/3.10/bin/python3',
+     '/usr/bin/python3'];
 
 function pythonVersion(cmd, args) {
   try {
@@ -88,9 +129,18 @@ function pythonVersion(cmd, args) {
   }
 }
 
-/** 返回 { cmd, args, version } 或 null */
+/** 返回 { cmd, args, version, bundled? } 或 null */
 function findPython() {
-  for (const [cmd, args] of PY_CANDIDATES) {
+  // ① 内置 standalone Python 优先：双击即用，不依赖用户装任何东西
+  const bundled = bundledPython();
+  if (bundled) {
+    const v = pythonVersion(bundled.cmd, []);
+    if (v) return { ...bundled, version: v };
+  }
+
+  // ② 退回系统 Python（绝对路径候选展开成 [cmd, []]；命令名保持原样）
+  for (const cand of PY_CANDIDATES) {
+    const [cmd, args] = Array.isArray(cand) ? cand : [cand, []];
     const v = pythonVersion(cmd, args);
     if (!v) continue;
     const [maj, min] = v.split('.').map(Number);
@@ -365,6 +415,7 @@ async function boot() {
   let dir;
   try {
     dir = prepareWeb();
+    prepareRuntime();   // 内置 Python 复制到 userData（.app 包内只读）
   } catch (e) {
     return createWindow(errorPage('资源没有解压成功',
       '', `<p>${e.message}</p>`));

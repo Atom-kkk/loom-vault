@@ -70,7 +70,7 @@ python3 serve.py                # 启动（或双击 start.command / start.bat�
 > 必须通过 `http://127.0.0.1:xxxx` 访问，不能双击 `index.html`。
 > 浏览器禁止 `file://` 页面使用 IndexedDB，直接打开会提示「数据库打不开」。这是浏览器的安全策略，不是应用的问题。
 
-从 GitHub 克隆下来后，参考图库的缩略图没入库，需要单独拉一次：图形界面里正常浏览时会按需加载，也可以跑 `python3 scripts/fetch_reference.py` 一次性拉全（4345 张，约 67 MB，可中断续传）。**国内网络如果卡在 cdn/fastly 节点，用 `python3 scripts/fetch_reference_gcore.py`**——固定走 `gcore.jsdelivr.net`，绕过系统代理，快得多。
+参考图库的 4345 张缩略图（约 68 MB）已随仓库分发，克隆下来就能直接用。想换源重拉（幂等，已有文件会跳过）：`python3 scripts/fetch_reference.py` 一次性拉全，**国内网络如果卡在 cdn/fastly 节点，用 `python3 scripts/fetch_reference_gcore.py`**——固定走 `gcore.jsdelivr.net`，绕过系统代理，快得多。
 
 想先看看效果：把 `demo/` 里的三张图拖进窗口，其中两张带内嵌参数（A1111 与 ComfyUI），会自动解析出提示词、种子、步数、LoRA。
 
@@ -93,6 +93,29 @@ python3 serve.py                # 启动（或双击 start.command / start.bat�
 
 > 模型文件本身不在本仓库（太大），需自行下载 `.safetensors` 放进对应目录。
 > 16 GB 内存的 Mac 建议用 fp8 量化的文本编码器（如 `qwen3vl_4b_fp8_scaled`，5.2 GB），bf16 版 8.8 GB 会大量走内存交换，出图很慢。
+
+### 硬件配置参考
+
+本地出图（ComfyUI 引擎）对硬件要求随模型档位拉开差距，按预算对号入座。统一用 fp8 量化文本编码器时，下列配置均可跑 Qwen-Image 2.1 / MOSS-Image 全流程：
+
+| 档位 | Windows | Mac | 适合 |
+|---|---|---|---|
+| 入门 | 8G 显存 · 32G 内存 | M4 16G | 跑得动，出一张图要等 |
+| 基础 | 16G 显存 · 64G 内存 | M5 Pro 48G | 日常使用流畅 |
+| 推荐 | 32G 显存 · 96G 内存 | M5 Max 128G | 多图参考编辑无压力 |
+| 旗舰 | 96G 显存 · 256G 内存 | M5 Ultra 512G | 批量出图 / 商用产能 |
+
+**显卡推荐（40 系 / 50 系）**
+
+- 8G 显存：4060 / 4060Ti / 5060 等尽可能选显存大的
+- 16G 显存：5060Ti 16G（速度较慢）· 5070Ti 16G · 5080 16G · 4090 24G 等
+- 32G 显存：5090 · 4090 48G 魔改
+- 96G 显存：RTX PRO 6000
+
+欢迎各配置的用户发送实测时间 / 软件 bug：
+
+- 邮箱：[517298997@qq.com](mailto:517298997@qq.com)
+- QQ：19744249（添加请备注来源）
 
 ---
 
