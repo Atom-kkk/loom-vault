@@ -48,6 +48,8 @@ class Engine:
 
     STATE_FILE = os.path.join(ROOT, ".engine.json")
     _lock = threading.Lock()
+    # 单独抽出来是为了测试能模拟 Windows 分支（不真的改 os.name）
+    IS_WIN = os.name == "nt"
 
     def __init__(self):
         self._state = self._load_state()
@@ -540,7 +542,7 @@ class Engine:
 
     @staticmethod
     def _no_window_kwargs():
-        if os.name == "nt":
+        if Engine.IS_WIN:
             return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
         return {}
 
@@ -567,7 +569,7 @@ class Engine:
         """
         pids = set()
         port = int(port)
-        if os.name == "nt":
+        if Engine.IS_WIN:
             out = Engine._powershell(
                 "(Get-NetTCPConnection -LocalPort %d -State Listen -ErrorAction SilentlyContinue)"
                 ".OwningProcess" % port)
@@ -609,7 +611,7 @@ class Engine:
     def _looks_like_comfy(pid):
         """确认这个 pid 真的是 ComfyUI，避免 pid 被系统复用后误杀别的进程。"""
         cmd = ""
-        if os.name == "nt":
+        if Engine.IS_WIN:
             cmd = Engine._powershell(
                 "(Get-CimInstance Win32_Process -Filter 'ProcessId=%d')"
                 ".CommandLine" % int(pid), timeout=10)

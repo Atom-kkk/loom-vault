@@ -854,10 +854,190 @@ window.Comfy = (function () {
    * 把提示词与参考图写进 API 工作流
    * @param {string[]} images  参考图文件名数组，按顺序填进各个 LoadImage 节点
    */
-  function applyInputs(api, { prompt, negative, images }) {
+  /* ---------------- 工作流槽位协议 ----------------
+     在 ComfyUI 里把某个节点的标题（_meta.title）改成下面的保留名，
+     Loom 就按「槽位」认角色，而不是靠节点类型 + id 顺序去猜。
+     工作流标了哪些槽位，UI 就长哪些能力；没标的参数不显示。
+     规范见 README「工作流槽位协议」。 */
+  const SLOT_SPEC = {
+    prompt: { kind: 'text', label: '正向提示词' },
+    negative_prompt: { kind: 'text', label: '负向提示词' },
+    seed: { kind: 'int', label: '种子' },
+    width: { kind: 'int', label: '宽' },
+    height: { kind: 'int', label: '高' },
+    batch: { kind: 'int', label: '张数' },
+    steps: { kind: 'int', label: '步数' },
+    cfg: { kind: 'float', label: 'CFG' },
+    denoise: { kind: 'float', label: '重绘幅度' },
+    duration: { kind: 'float', label: '时长' },
+    ref_mask: { kind: 'image', label: '重绘遮罩' },
+    first_frame: { kind: 'image', label: '首帧' },
+    last_frame: { kind: 'image', label: '尾帧' }
+  };
+  const REF_SLOT_RE = /^ref_(image|video|audio)_(\d{1,2})$/;
+  const NUM_SLOTS = ['seed', 'width', 'height', 'batch', 'steps', 'cfg', 'denoise', 'duration'];
+
+  const CAP_LABEL = {
+    t2i: '文生图', i2i: '参考图', inpaint: '遮罩重绘', firstlast: '首尾帧', video: '视频'
+  };
+
+  /** 节点标题 → 槽位名（大小写、空格、短横线都宽容） */
+  function slotNameOf(node) {
+    const raw = node && node._meta && node._meta.title;
+    if (!raw) return '';
+    const key = String(raw).trim().toLowerCase().replace(/[\s\-]+/g, '_');
+    if (SLOT_SPEC[key]) return key;
+    return REF_SLOT_RE.test(key) ? key : '';
+  }
+
+  /** 这个槽位该写进节点的哪个 input */
+  function slotField(node, kind) {
+    const inputs = (node && node.inputs) || {};
+    const keys = Object.keys(inputs);
+    if (!keys.length) return '';
+    const prefer = {
+      text: ['text', 'value', 'string', 'prompt'],
+      image: ['image', 'value', 'filename', 'file'],
+      int: ['value', 'seed', 'noise_seed', 'batch_size', 'width', 'height', 'steps', 'number'],
+      float: ['value', 'cfg', 'denoise', 'duration', 'number']
+    }[kind] || [];
+    for (const k of prefer) if (k in inputs) return k;
+    const want = (kind === 'text' || kind === 'image') ? 'string' : 'number';
+    for (const k of keys) if (typeof inputs[k] === want) return k;
+    return keys[0];
+  }
+
+  /**
+   * 解析工作流里的槽位标注（纯函数，不依赖 DOM）
+   * @returns {{labeled:boolean, slots:object, refs:Array, mask:object|null,
+   *            frames:object, numbers:object, capabilities:string[], warnings:string[]}}
+   */
+  function parseSlots(api) {
+    const out = {
+      labeled: false, slots: {}, refs: [], mask: null,
+      frames: {}, numbers: {}, capabilities: [], warnings: []
+    };
+
+    for (const [id, node] of Object.entries(api || {})) {
+      if (!node || !node.inputs) continue;
+      const name = slotNameOf(node);
+      if (!name) continue;
+      out.labeled = true;
+
+      const refMatch = name.match(REF_SLOT_RE);
+      const kind = refMatch ? 'image' : SLOT_SPEC[name].kind;
+      const field = slotField(node, kind);
+      if (!field) {
+        out.warnings.push('槽位 ' + name + '（节点 #' + id + '）找不到可写入的输入');
+        continue;
+      }
+      const entry = { id: id, field: field, name: name, class: node.class_type || '' };
+
+      if (refMatch) {
+        out.refs.push(Object.assign({}, entry, { type: refMatch[1], index: Number(refMatch[2]) }));
+        continue;
+      }
+      if (name === 'ref_mask') { out.mask = entry; continue; }
+      if (name === 'first_frame' || name === 'last_frame') { out.frames[name] = entry; continue; }
+      if (NUM_SLOTS.indexOf(name) >= 0) { out.numbers[name] = entry; continue; }
+
+      if (out.slots[name]) {
+        out.warnings.push('槽位 ' + name + ' 重复标注（#' + out.slots[name].id + ' 与 #' + id + '），取前者');
+        continue;
+      }
+      out.slots[name] = entry;
+    }
+
+    // 参考图按编号排序：编号有意义（01 是主图）
+    out.refs.sort(function (a, b) {
+      return a.index - b.index || (Number(a.id) || 0) - (Number(b.id) || 0);
+    });
+
+    // 能力由「标了什么」推导，不需要单独声明；没标注就不猜
+    const imgRefs = out.refs.filter(function (r) { return r.type === 'image'; });
+    const caps = [];
+    if (out.labeled) {
+      if (out.frames.first_frame && out.frames.last_frame) caps.push('firstlast');
+      else if (out.frames.first_frame) caps.push('video');
+      if (out.mask) caps.push('inpaint');
+      if (imgRefs.length) caps.push('i2i');
+      if (!imgRefs.length && !out.mask && !out.frames.first_frame) caps.push('t2i');
+    }
+    out.capabilities = caps;
+    out.imageSlots = imgRefs.length;
+    return out;
+  }
+
+  /** 给 UI 用的一句话摘要，例如「参考图 · 2 个图位 · 遮罩重绘」 */
+  function slotSummary(slots) {
+    if (!slots || !slots.labeled) return '';
+    const parts = (slots.capabilities || []).map(function (c) { return CAP_LABEL[c] || c; });
+    const n = (slots.refs || []).filter(function (r) { return r.type === 'image'; }).length;
+    if (n) parts.push(n + ' 个图位');
+    if (slots.mask) parts.push('有遮罩位');
+    return parts.join(' · ');
+  }
+
+  /**
+   * 把用户输入写进 API 工作流
+   * · 工作流标了槽位 → 按标注精确写入（多图位、遮罩、首尾帧都不会错位）
+   * · 没标注 → 退回旧规则（按节点类型 + id 顺序猜），并给出提示
+   */
+  function applyInputs(api, input) {
+    const opts = input || {};
+    const prompt = opts.prompt, negative = opts.negative, images = opts.images;
+    const mask = opts.mask, seed = opts.seed, width = opts.width, height = opts.height, batch = opts.batch;
+
     const next = JSON.parse(JSON.stringify(api));
-    const info = analyzeApi(next);
     const list = Array.isArray(images) ? images.filter(Boolean) : (images ? [images] : []);
+    const slots = parseSlots(next);
+
+    const write = function (entry, value) {
+      const node = entry && next[entry.id];
+      if (!node || !node.inputs || !(entry.field in node.inputs)) return false;
+      node.inputs[entry.field] = value;
+      return true;
+    };
+    const writeNum = function (name, value) {
+      if (value === null || value === undefined || value === '' || Number.isNaN(Number(value))) return false;
+      return write(slots.numbers[name], Number(value));
+    };
+
+    /* ============ 路径一：有槽位标注 ============ */
+    if (slots.labeled) {
+      if (prompt) write(slots.slots.prompt, prompt);
+      if (negative) write(slots.slots.negative_prompt, negative);
+
+      const imgRefs = slots.refs.filter(function (r) { return r.type === 'image'; });
+      const used = Math.min(list.length, imgRefs.length);
+      for (let i = 0; i < used; i++) write(imgRefs[i], list[i]);
+
+      // 没有 ref_image 槽位但有 first_frame：第一张图当首帧（图生视频常见用法）
+      if (!used && list[0] && slots.frames.first_frame) write(slots.frames.first_frame, list[0]);
+
+      if (mask) {
+        if (slots.mask) write(slots.mask, mask);
+        else slots.warnings.push('工作流没有 ref_mask 槽位，遮罩不会生效');
+      }
+
+      writeNum('seed', seed);
+      writeNum('width', width);
+      writeNum('height', height);
+      writeNum('batch', batch);
+
+      return {
+        api: next, mode: 'slot',
+        used: used + ((!used && list[0] && slots.frames.first_frame) ? 1 : 0),
+        slots: imgRefs.length,
+        dropped: Math.max(0, list.length - imgRefs.length),
+        capabilities: slots.capabilities,
+        warnings: slots.warnings,
+        slotMap: slots
+      };
+    }
+
+    /* ============ 路径二：没标注，退回旧规则 ============ */
+    const info = analyzeApi(next);
 
     if (prompt && info.positiveId && next[info.positiveId]) {
       const n = next[info.positiveId];
@@ -876,10 +1056,13 @@ window.Comfy = (function () {
     }
 
     return {
-      api: next,
+      api: next, mode: 'legacy',
       used,
       slots: info.imageIds.length,
-      dropped: Math.max(0, list.length - info.imageIds.length)
+      dropped: Math.max(0, list.length - info.imageIds.length),
+      capabilities: info.imageIds.length ? ['i2i'] : ['t2i'],
+      warnings: ['这个工作流没有槽位标注，按「节点类型 + 顺序」猜的；复杂多图位/遮罩工作流建议加标注'],
+      slotMap: { labeled: false, slots: {}, refs: [], mask: null, frames: {}, numbers: {}, capabilities: [], warnings: [] }
     };
   }
 
@@ -889,6 +1072,8 @@ window.Comfy = (function () {
     uploadImage, queue, history, fetchImage, run,
     openWs, closeWs, wsConnected: () => !!ws && ws.readyState === 1,
     analyzeApi, applyInputs, extractImages, cancelAll, waitFor,
+    parseSlots, slotSummary, slotVocabulary: () => Object.keys(SLOT_SPEC), capLabel: (c) => CAP_LABEL[c] || c,
+    withFreshSeeds, stripPluginSeeds,
     ensureEngine, engineStatus, setEngineConfig, setEnginePaths, listDir,
     scanModels, restartEngine, outputs,
     installStart, installStatus, installCancel, pickDir

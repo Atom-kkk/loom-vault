@@ -1900,3 +1900,187 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .out-main span { font-size: 10.5px; color: var(--text-3); }
+
+/* ============================================================
+   画布 · 槽位徽章 / 批量 / 图片组 / 遮罩 / 小地图
+   ============================================================ */
+
+/* 槽位徽章：工作流标了什么就显示什么 */
+.cv-slots {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+  margin: 2px 0 6px;
+}
+.cv-slots i {
+  font-style: normal; font-size: 9.5px; font-weight: 600;
+  letter-spacing: .2px;
+  padding: 1px 6px; border-radius: 20px;
+  color: var(--rose-ink); background: var(--rose-soft);
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.cv-slots i.num {
+  color: var(--text-2); background: var(--panel-3);
+}
+.cv-slots.none {
+  font-size: 10px; color: var(--text-3);
+  padding: 2px 7px; border-radius: 20px;
+  background: var(--panel-2); border: 1px dashed var(--line-strong);
+  display: inline-block;
+}
+
+/* 批量张数 + 固定种子 */
+.cv-batch {
+  display: flex; align-items: center; gap: 5px;
+  margin: 0 0 7px;
+  font-size: 10.5px; color: var(--text-3);
+}
+.cv-batch > span { margin-right: 1px; }
+.cv-batch > button {
+  width: 20px; height: 20px; padding: 0;
+  border-radius: 6px;
+  border: 1px solid var(--line-input);
+  background: var(--panel-2); color: var(--text-2);
+  font-size: 13px; line-height: 1;
+  cursor: pointer;
+  transition: .15s var(--ease);
+}
+.cv-batch > button:hover:not(:disabled) { color: var(--text); border-color: var(--line-strong); }
+.cv-batch > button:disabled { opacity: .4; cursor: default; }
+.cv-batch > b {
+  min-width: 14px; text-align: center;
+  font-size: 12px; color: var(--text); font-weight: 600;
+}
+.cv-seedfix {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-left: auto; font-size: 10px; color: var(--text-3);
+  cursor: pointer;
+}
+.cv-seedfix input { accent-color: var(--rose); margin: 0; }
+
+/* 重试按钮（错误状态下出现在取消的位置） */
+.cv-cancel.retry { color: var(--rose-ink); border-color: var(--rose); }
+.cv-cancel.retry:hover { background: var(--rose-soft); }
+
+/* 有遮罩的图片节点 */
+.cv-mini.on { color: var(--rose-ink); background: var(--rose-soft); }
+.cv-mask-chip {
+  position: absolute; left: 8px; bottom: 8px;
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 2px 7px; border-radius: 20px;
+  font-size: 9.5px; font-weight: 600;
+  color: #fff; background: rgba(214, 120, 145, .9);
+  pointer-events: none;
+}
+
+/* 图片组节点 */
+.cv-group-main { position: relative; }
+.cv-group-main .cv-img { display: block; }
+.cv-group-count {
+  position: absolute; right: 8px; top: 8px;
+  padding: 1px 7px; border-radius: 20px;
+  font-size: 10px; font-weight: 600;
+  color: #fff; background: rgba(0, 0, 0, .55);
+  backdrop-filter: blur(4px);
+}
+.cv-group-strip {
+  display: flex; gap: 4px; padding: 6px 8px 0;
+  overflow-x: auto; scrollbar-width: none;
+}
+.cv-group-strip::-webkit-scrollbar { display: none; }
+.cv-thumb {
+  width: 34px; height: 34px; flex: 0 0 auto;
+  object-fit: cover; border-radius: 6px;
+  border: 1.5px solid transparent; opacity: .62;
+  cursor: pointer; transition: .15s var(--ease);
+}
+.cv-thumb:hover { opacity: .9; }
+.cv-thumb.on { border-color: var(--rose); opacity: 1; }
+.cv-group-ops {
+  display: flex; gap: 6px; padding: 7px 8px 9px;
+}
+.cv-group-ops > button {
+  flex: 1; height: 24px; border-radius: 7px;
+  border: 1px solid var(--line-input);
+  background: transparent; color: var(--text-2);
+  font-size: 10.5px; cursor: pointer;
+  transition: .15s var(--ease);
+}
+.cv-group-ops > button:hover { color: var(--text); border-color: var(--line-strong); }
+
+/* 展开图片组的网格 */
+.group-grid {
+  display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  max-height: 62vh; overflow: auto;
+}
+.group-cell {
+  margin: 0; cursor: pointer;
+  border: 1.5px solid var(--line); border-radius: 10px;
+  overflow: hidden; background: var(--panel-2);
+  transition: .15s var(--ease);
+}
+.group-cell:hover { border-color: var(--line-strong); }
+.group-cell.on { border-color: var(--rose); box-shadow: 0 0 0 2px var(--rose-soft); }
+.group-cell img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
+.group-cell figcaption {
+  padding: 4px 7px; font-size: 10px; color: var(--text-3);
+  font-family: var(--mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* 遮罩编辑器 */
+.mask-stage {
+  position: relative; margin: 0 auto 12px;
+  border-radius: 10px; overflow: hidden;
+  background: var(--panel-3);
+  touch-action: none;
+}
+.mask-stage img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.mask-stage canvas {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  cursor: crosshair; touch-action: none;
+}
+.mask-tools {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.mask-size {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11.5px; color: var(--text-2);
+}
+.mask-size input { width: 120px; }
+.mask-size b { font-family: var(--mono); font-size: 11px; color: var(--text); }
+.mask-tools .btn.on { color: var(--rose-ink); border-color: var(--rose); background: var(--rose-soft); }
+
+/* 小地图 */
+.cv-map {
+  position: absolute; right: 14px; bottom: 14px;
+  width: 200px; height: 140px;
+  padding: 4px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-elev) 82%, transparent);
+  border: 1px solid var(--line);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .18);
+  backdrop-filter: blur(6px);
+  cursor: crosshair;
+  z-index: 6;
+}
+.cv-map canvas { display: block; width: 100%; height: 100%; border-radius: 8px; }
+@media (max-width: 760px) { .cv-map { display: none; } }
+
+/* 框选矩形 */
+.cv-box {
+  position: absolute; display: none;
+  border: 1px solid var(--rose);
+  background: var(--rose-soft);
+  border-radius: 3px;
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* 底部提示别被小地图压住 */
+.cv-hint { right: 232px; max-width: calc(100% - 260px); text-align: right; }
+@media (max-width: 760px) { .cv-hint { right: 18px; max-width: calc(100% - 36px); } }
+
+/* 张数行：窄节点时换行，别把固定种子挤出去 */
+.cv-batch { flex-wrap: wrap; row-gap: 4px; }
+.cv-seedfix { flex: 0 0 auto; }

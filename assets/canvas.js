@@ -22,6 +22,8 @@ window.Canvas = (function () {
   let spaceDown = false;
   let globalsBound = false;
   let saveTimer = null;
+  let boxSel = null;      // 框选中的矩形（屏幕坐标）
+  let clipboard = null;   // 复制出来的节点快照
 
   const MIN_K = 0.2, MAX_K = 2.4;
 
@@ -285,8 +287,11 @@ window.Canvas = (function () {
           <button class="cv-tool" data-cv="reset" title="100%">${V.icon('back', 15)}</button>
           <button class="cv-zoom" id="cv-zoom" data-cv="zoom100" title="回到 100%（点一下）">100%</button>
         </div>
+        <div class="cv-map" id="cv-map" title="小地图：点一下跳过去">
+          <canvas id="cv-map-cv" width="200" height="140"></canvas>
+        </div>
         <div class="cv-hint" id="cv-hint">
-          拖动空白处平移 · 滚轮缩放 · Delete 删除 · ⌘Z 撤销 · Esc 退出画布
+          拖动空白处平移 · 滚轮缩放 · <b>Shift+拖拽</b> 框选 · <b>⌘C/⌘V</b> 复制粘贴 · Delete 删除 · Esc 退出画布
         </div>
       </div>`;
 
@@ -295,6 +300,7 @@ window.Canvas = (function () {
     edgeLayer = c.querySelector('#cv-edges');
 
     bindCanvasEvents(c);
+    bindMinimap();
   }
 
   /* ============================================================
@@ -324,6 +330,7 @@ window.Canvas = (function () {
       const vis = cv.nodes.filter(visibleNode).length;
       sub.textContent = `${cv.name} · ${vis} 个节点`;
     }
+    drawMinimap();
   }
 
   function makeNodeEl(n) {
@@ -345,6 +352,7 @@ window.Canvas = (function () {
           ${n.type === 'gen' ? `<button class="cv-mini" data-cvnode="addref" title="加一个参考图节点">${V.icon('img', 13)}</button>` : ''}
           ${n.type === 'gen' ? `<button class="cv-mini" data-cvnode="run" title="生成">${V.icon('spark', 13)}</button>` : ''}
           ${n.type === 'image' || n.type === 'ref' ? `<button class="cv-mini" data-cvnode="replace" title="换图">${V.icon('upload', 13)}</button>` : ''}
+          ${n.type === 'image' || n.type === 'ref' ? `<button class="cv-mini${n.data.maskSrc ? ' on' : ''}" data-cvnode="mask" title="画重绘遮罩">${V.icon('edit', 13)}</button>` : ''}
           <button class="cv-mini" data-cvnode="del" title="删除">${V.icon('close', 13)}</button>
         </div>
       </div>`;
@@ -360,6 +368,9 @@ window.Canvas = (function () {
       body = shownSrc
         ? `<img class="cv-img" src="${esc(shownSrc)}" alt="">`
         : `<div class="cv-drop">${V.icon('img', 26)}<span>双击或点右上角上传图片</span></div>`;
+      if (n.data.maskSrc) {
+        body += `<div class="cv-mask-chip" title="已加遮罩：白色区域会被重绘">${V.icon('edit', 11)}遮罩</div>`;
+      }
     } else if (n.type === 'gen') {
       const st = n.data.status || 'idle';
       const refCount = (cv ? cv.edges.filter(e => e.to === n.id) : [])
@@ -376,9 +387,11 @@ window.Canvas = (function () {
             : `<div class="cv-drop">${V.icon('spark', 24)}<span>${st === 'running' ? '生成中…' : '还没有结果'}</span></div>`}
         </div>
         <div class="cv-gen-meta">
-          <span>${esc(n.data.wfName || '未绑定工作流')}</span>
+          <span>${esc(wfLabel(n))}</span>
           <span>${esc(refTxt || n.data.model || '')}</span>
         </div>
+        ${slotChips(n)}
+        ${batchRow(n)}
         ${st === 'running' && n.data.prog
           ? `<div class="cv-prog"><i style="width:${Math.min(100, Math.max(2, Math.round(n.data.prog.step / Math.max(1, n.data.prog.total) * 100)))}%"></i></div>`
           : ''}
@@ -386,7 +399,8 @@ window.Canvas = (function () {
         <button class="cv-run" data-cvnode="run" ${st === 'running' ? 'disabled' : ''}>
           ${st === 'running' ? '<span class="spinner"></span> 生成中' : '生成'}
         </button>
-        ${st === 'running' ? '<button class="cv-cancel" data-cvnode="cancel">取消</button>' : ''}`;
+        ${st === 'running' ? '<button class="cv-cancel" data-cvnode="cancel">取消</button>' : ''}
+        ${st === 'error' ? '<button class="cv-cancel retry" data-cvnode="retry">重试</button>' : ''}`;
     } else if (n.type === 'simple') {
       const st = n.data.status || 'idle';
       const slots = n.data.imageSlots || 0;
@@ -401,15 +415,37 @@ window.Canvas = (function () {
         </div>
         ${n.data.status === 'done' && n.data.resultSrc ? `<img class="cv-img" src="${esc(n.data.resultSrc)}" alt="">` : ''}
         <div class="cv-gen-meta" title="点这里换工作流">
-          <span>${esc(n.data.wfName || '未绑定工作流')}</span>
+          <span>${esc(wfLabel(n))}</span>
           <span>${slots ? slots + ' 个图位' : '纯文生图'}</span>
         </div>
+        ${slotChips(n)}
+        ${batchRow(n)}
         ${st === 'running' && n.data.prog ? `<div class="cv-prog"><i style="width:${pct}%"></i></div>` : ''}
         ${n.data.statusText ? `<div class="cv-gen-status ${st}">${esc(n.data.statusText)}</div>` : ''}
         <button class="cv-run" data-cvnode="run" ${st === 'running' ? 'disabled' : ''}>
           ${st === 'running' ? '<span class="spinner"></span> 生成中' : '生成'}
         </button>
-        ${st === 'running' ? '<button class="cv-cancel" data-cvnode="cancel">取消</button>' : ''}`;
+        ${st === 'running' ? '<button class="cv-cancel" data-cvnode="cancel">取消</button>' : ''}
+        ${st === 'error' ? '<button class="cv-cancel retry" data-cvnode="retry">重试</button>' : ''}`;
+    } else if (n.type === 'group') {
+      const items = groupItems(n);
+      const act = Math.min(items.length - 1, Math.max(0, Number(n.data.active) || 0));
+      const cur = items[act] || {};
+      body = `
+        <div class="cv-group-main">
+          ${cur.src
+            ? `<img class="cv-img" src="${esc(cur.src)}" alt="">`
+            : `<div class="cv-drop">${V.icon('img', 24)}<span>空图片组</span></div>`}
+          ${items.length > 1 ? `<span class="cv-group-count">${act + 1} / ${items.length}</span>` : ''}
+        </div>
+        ${items.length > 1
+            ? `<div class="cv-group-strip">${items.map((it, i) =>
+              `<img class="cv-thumb${i === act ? ' on' : ''}" data-cvnode="g-pick" data-i="${i}" src="${esc(it.src)}" alt="">`).join('')}</div>`
+            : ''}
+        <div class="cv-group-ops">
+          <button data-cvnode="g-expand">展开</button>
+          <button data-cvnode="g-split">拆开</button>
+        </div>`;
     } else if (n.type === 'wf') {
       const keys = n.data.keys;
       const vals = n.data.widgets || [];
@@ -449,8 +485,491 @@ window.Canvas = (function () {
     return d;
   }
 
+  /* ---------------- 小地图 ---------------- */
+  const NODE_COLOR = {
+    prompt: 'rgba(150,140,200,.9)', gen: 'rgba(214,120,145,.95)', simple: 'rgba(214,120,145,.95)',
+    image: 'rgba(110,170,155,.9)', ref: 'rgba(200,160,110,.9)', group: 'rgba(110,150,200,.9)',
+    wf: 'rgba(140,140,140,.7)'
+  };
+
+  function visibleBoxes() {
+    const out = [];
+    (cv ? cv.nodes : []).forEach(n => {
+      if (!visibleNode(n)) return;
+      const el = world && world.querySelector(`.cv-node[data-id="${n.id}"]`);
+      const w = n.w || (el && el.offsetWidth) || 240;
+      const h = n.h || (el && el.offsetHeight) || 150;
+      out.push({ n, x: n.x, y: n.y, w, h });
+    });
+    return out;
+  }
+
+  function drawMinimap() {
+    const wrap = host && host.querySelector('#cv-map');
+    const cvs = host && host.querySelector('#cv-map-cv');
+    if (!wrap || !cvs || !cv) return;
+    const ctx = cvs.getContext('2d');
+    const W = cvs.width, H = cvs.height;
+    ctx.clearRect(0, 0, W, H);
+
+    const boxes = visibleBoxes();
+    const vp = host.querySelector('#cv-viewport');
+    const vpW = vp ? vp.clientWidth : 800;
+    const vpH = vp ? vp.clientHeight : 600;
+    // 视口在世界里的矩形
+    const viewRect = {
+      x: -cv.view.x / cv.view.k,
+      y: -cv.view.y / cv.view.k,
+      w: vpW / cv.view.k,
+      h: vpH / cv.view.k
+    };
+
+    let minX = viewRect.x, minY = viewRect.y, maxX = viewRect.x + viewRect.w, maxY = viewRect.y + viewRect.h;
+    boxes.forEach(b => {
+      minX = Math.min(minX, b.x); minY = Math.min(minY, b.y);
+      maxX = Math.max(maxX, b.x + b.w); maxY = Math.max(maxY, b.y + b.h);
+    });
+    const pad = 60;
+    minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+    const bw = Math.max(1, maxX - minX), bh = Math.max(1, maxY - minY);
+    const k = Math.min(W / bw, H / bh);
+    const ox = (W - bw * k) / 2 - minX * k;
+    const oy = (H - bh * k) / 2 - minY * k;
+    const toMap = (x, y) => ({ x: x * k + ox, y: y * k + oy });
+
+    wrap.dataset.k = String(k);
+    wrap.dataset.ox = String(ox);
+    wrap.dataset.oy = String(oy);
+
+    boxes.forEach(b => {
+      const p = toMap(b.x, b.y);
+      ctx.fillStyle = NODE_COLOR[b.n.type] || 'rgba(150,150,150,.8)';
+      const w = Math.max(2, b.w * k), h = Math.max(2, b.h * k);
+      ctx.fillRect(p.x, p.y, w, h);
+      if (selected.has(b.n.id)) {
+        ctx.strokeStyle = 'rgba(255,255,255,.9)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(p.x - 0.5, p.y - 0.5, w + 1, h + 1);
+      }
+    });
+
+    const v = toMap(viewRect.x, viewRect.y);
+    ctx.strokeStyle = 'rgba(120,120,120,.95)';
+    ctx.lineWidth = 1.2;
+    ctx.strokeRect(v.x, v.y, viewRect.w * k, viewRect.h * k);
+  }
+
+  function bindMinimap() {
+    const wrap = host && host.querySelector('#cv-map');
+    const cvs = host && host.querySelector('#cv-map-cv');
+    if (!wrap || !cvs) return;
+    let dragging = false;
+    const jump = e => {
+      const r = cvs.getBoundingClientRect();
+      const mx = (e.clientX - r.left) * (cvs.width / r.width);
+      const my = (e.clientY - r.top) * (cvs.height / r.height);
+      const k = Number(wrap.dataset.k) || 0.1;
+      const ox = Number(wrap.dataset.ox) || 0;
+      const oy = Number(wrap.dataset.oy) || 0;
+      const wx = (mx - ox) / k, wy = (my - oy) / k;
+      const vp = host.querySelector('#cv-viewport');
+      cv.view.x = (vp ? vp.clientWidth : 800) / 2 - wx * cv.view.k;
+      cv.view.y = (vp ? vp.clientHeight : 600) / 2 - wy * cv.view.k;
+      applyTransform();
+      drawMinimap();
+    };
+    cvs.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      dragging = true;
+      jump(e);
+      try { cvs.setPointerCapture(e.pointerId); } catch { }
+    });
+    cvs.addEventListener('pointermove', e => { if (dragging) jump(e); });
+    cvs.addEventListener('pointerup', () => { dragging = false; queueSave(); });
+    cvs.addEventListener('wheel', e => e.stopPropagation());
+  }
+
+  /* ---------------- 框选 ---------------- */
+  function startBoxSelect(e) {
+    const vp = host.querySelector('#cv-viewport');
+    const r = vp.getBoundingClientRect();
+    const x0 = e.clientX - r.left, y0 = e.clientY - r.top;
+    boxSel = { x0, y0, x1: x0, y1: y0, add: e.shiftKey && e.altKey };
+    let el = host.querySelector('#cv-box');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'cv-box';
+      el.className = 'cv-box';
+      vp.appendChild(el);
+    }
+    el.style.display = 'block';
+    el.style.left = x0 + 'px';
+    el.style.top = y0 + 'px';
+    el.style.width = '0px';
+    el.style.height = '0px';
+  }
+
+  function updateBoxSelect(e) {
+    const vp = host.querySelector('#cv-viewport');
+    const r = vp.getBoundingClientRect();
+    boxSel.x1 = e.clientX - r.left;
+    boxSel.y1 = e.clientY - r.top;
+    const el = host.querySelector('#cv-box');
+    if (el) {
+      el.style.left = Math.min(boxSel.x0, boxSel.x1) + 'px';
+      el.style.top = Math.min(boxSel.y0, boxSel.y1) + 'px';
+      el.style.width = Math.abs(boxSel.x1 - boxSel.x0) + 'px';
+      el.style.height = Math.abs(boxSel.y1 - boxSel.y0) + 'px';
+    }
+  }
+
+  function endBoxSelect() {
+    if (!boxSel) return;
+    const vp = host.querySelector('#cv-viewport');
+    const el = host.querySelector('#cv-box');
+    if (el) el.style.display = 'none';
+
+    const a = screenToWorld(
+      Math.min(boxSel.x0, boxSel.x1) + vp.getBoundingClientRect().left,
+      Math.min(boxSel.y0, boxSel.y1) + vp.getBoundingClientRect().top
+    );
+    const b = screenToWorld(
+      Math.abs(boxSel.x1 - boxSel.x0) + Math.min(boxSel.x0, boxSel.x1) + vp.getBoundingClientRect().left,
+      Math.abs(boxSel.y1 - boxSel.y0) + Math.min(boxSel.y0, boxSel.y1) + vp.getBoundingClientRect().top
+    );
+    const rx1 = Math.min(a.x, b.x), rx2 = Math.max(a.x, b.x);
+    const ry1 = Math.min(a.y, b.y), ry2 = Math.max(a.y, b.y);
+
+    if (!boxSel.add) selected.clear();
+    visibleBoxes().forEach(bx => {
+      const hit = bx.x < rx2 && bx.x + bx.w > rx1 && bx.y < ry2 && bx.y + bx.h > ry1;
+      if (hit) selected.add(bx.n.id);
+    });
+    world.querySelectorAll('.cv-node').forEach(el2 =>
+      el2.classList.toggle('sel', selected.has(el2.dataset.id)));
+
+    boxSel = null;
+    drawMinimap();
+  }
+
+  /* ---------------- 复制 / 粘贴 ---------------- */
+  function copySelection() {
+    if (!cv || !selected.size) return false;
+    const ids = new Set(selected);
+    const nodes = cv.nodes.filter(n => ids.has(n.id));
+    if (!nodes.length) return false;
+    const edges = cv.edges.filter(e => ids.has(e.from) && ids.has(e.to));
+    clipboard = JSON.parse(JSON.stringify({ nodes, edges }));
+    return true;
+  }
+
+  function pasteClipboard() {
+    if (!cv || !clipboard || !clipboard.nodes.length) return false;
+    pushHistory();
+    const idMap = new Map();
+    const off = 48;
+    const newNodes = clipboard.nodes.map(n => {
+      const nid = U.uid('n');
+      idMap.set(n.id, nid);
+      const copy = JSON.parse(JSON.stringify(n));
+      copy.id = nid;
+      copy.x = (n.x || 0) + off;
+      copy.y = (n.y || 0) + off;
+      if (copy.data) {
+        delete copy.data.promptId;      // 复制品不该继承别人的任务
+        delete copy.data.canceled;
+        if (copy.data.status === 'running') { copy.data.status = 'idle'; copy.data.statusText = ''; copy.data.prog = null; }
+      }
+      return copy;
+    });
+    const newEdges = clipboard.edges
+      .map(e => ({ id: U.uid('e'), from: idMap.get(e.from), to: idMap.get(e.to) }))
+      .filter(e => e.from && e.to);
+
+    cv.nodes.push(...newNodes);
+    cv.edges.push(...newEdges);
+    selected = new Set(newNodes.map(n => n.id));
+    renderAll();
+    queueSave();
+    return true;
+  }
+
+  /* ---------------- 槽位 / 批量 / 图片组 工具 ---------------- */
+  const slotCache = new Map();
+
+  /** 取某个工作流的槽位解析结果（按内容缓存，工作流一改自动失效） */
+  function wfSlots(wf) {
+    if (!wf || typeof wf.content !== 'string') return null;
+    const hit = slotCache.get(wf.id);
+    if (hit && hit.content === wf.content) return hit.slots;
+    let slots = null;
+    try {
+      const api = JSON.parse(wf.content);
+      if (api && !Array.isArray(api.nodes)) slots = Comfy.parseSlots(api);
+    } catch { }
+    slotCache.set(wf.id, { content: wf.content, slots });
+    return slots;
+  }
+
+  function slotsOfNode(n) {
+    const wf = V.state.workflows.find(w => w.id === n.data.workflowId);
+    return wf ? wfSlots(wf) : null;
+  }
+
+  /** 节点上显示的工作流名：优先缓存的名字，其次按 id 现查（导入/复用时 wfName 可能是空的） */
+  function wfLabel(n) {
+    if (n.data.wfName) return n.data.wfName;
+    const wf = V.state.workflows.find(w => w.id === n.data.workflowId);
+    return wf ? wf.name : '未绑定工作流';
+  }
+
+  /** 只重画一个节点（不整屏重建） */
+  function refreshNode(n) {
+    const el = world.querySelector(`.cv-node[data-id="${n.id}"]`);
+    if (el) el.replaceWith(makeNodeEl(n));
+  }
+
+  function slotChips(n) {
+    const s = slotsOfNode(n);
+    if (!s) return '';
+    if (!s.labeled) {
+      return `<div class="cv-slots none" title="工作流没有 _meta.title 标注，按节点类型猜的；复杂工作流建议加标注">按类型猜 · 未标注</div>`;
+    }
+    const chips = (s.capabilities || []).map(c => `<i>${esc(Comfy.capLabel(c))}</i>`).join('');
+    const slots = s.imageSlots ? `<i class="num">${s.imageSlots} 图位</i>` : '';
+    const mask = s.mask ? `<i class="num">遮罩位</i>` : '';
+    return `<div class="cv-slots">${chips}${slots}${mask}</div>`;
+  }
+
+  function batchRow(n) {
+    const b = Math.max(1, Math.min(8, Number(n.data.batch) || 1));
+    const fixed = !!n.data.seedFixed;
+    return `<div class="cv-batch">
+        <span>张数</span>
+        <button data-cvnode="batch-" ${b <= 1 ? 'disabled' : ''}>−</button>
+        <b>${b}</b>
+        <button data-cvnode="batch+" ${b >= 8 ? 'disabled' : ''}>+</button>
+        <label class="cv-seedfix" title="固定种子：同一提示词可复现同一张图"><input type="checkbox" data-seedfix ${fixed ? 'checked' : ''}>固定种子</label>
+      </div>`;
+  }
+
+  /* ---------------- 遮罩编辑器 ---------------- */
+  async function openMaskEditor(n) {
+    const src = n.data.hiSrc || n.data.src;
+    if (!src) return V.toast('先给这个节点放一张图，再画遮罩', 'err');
+
+    const img = new Image();
+    img.src = src;
+    try { await img.decode(); } catch { }
+    const natW = img.naturalWidth || 512;
+    const natH = img.naturalHeight || 512;
+    const scale = Math.min(1, 640 / natW, 480 / natH);
+    const dispW = Math.max(64, Math.round(natW * scale));
+    const dispH = Math.max(64, Math.round(natH * scale));
+
+    V.openModal({
+      title: '画笔遮罩 · 涂哪里重绘哪里',
+      sub: `原图 ${natW}×${natH} · 遮罩会按原图尺寸导出，提交到工作流的 ref_mask 槽位`,
+      wide: true,
+      body: `<div class="mask-stage" style="width:${dispW}px;height:${dispH}px">
+          <img src="${esc(src)}" alt="">
+          <canvas id="mask-cv" width="${dispW}" height="${dispH}"></canvas>
+        </div>
+        <div class="mask-tools">
+          <label class="mask-size">笔刷 <input type="range" id="mask-size" min="4" max="140" value="36"><b id="mask-size-v">36</b></label>
+          <button class="btn sm" id="mask-erase">橡皮</button>
+          <button class="btn sm" id="mask-clear">清空</button>
+          <button class="btn sm" id="mask-invert">反选</button>
+          <span class="hint" id="mask-tip">按住左键涂抹；空白 = 不重绘</span>
+        </div>`,
+      footer: `<button class="btn" data-close>取消</button>
+               <button class="btn" id="mask-remove">移除遮罩</button>
+               <button class="btn primary" id="mask-save">保存遮罩</button>`,
+      onMount: (box, close) => {
+        const cvs = box.querySelector('#mask-cv');
+        const ctx = cvs.getContext('2d');
+        let erasing = false;
+        let drawing = false;
+        let last = null;
+
+        const paint = (from, to) => {
+          ctx.globalCompositeOperation = erasing ? 'destination-out' : 'source-over';
+          ctx.strokeStyle = 'rgba(255,74,110,.62)';
+          ctx.lineWidth = Number(box.querySelector('#mask-size').value);
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.beginPath();
+          if (from) { ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); }
+          else { ctx.moveTo(to.x, to.y); ctx.lineTo(to.x + 0.01, to.y); }
+          ctx.stroke();
+        };
+        const pos = e => {
+          const r = cvs.getBoundingClientRect();
+          return { x: (e.clientX - r.left) * (cvs.width / r.width), y: (e.clientY - r.top) * (cvs.height / r.height) };
+        };
+
+        cvs.addEventListener('pointerdown', e => {
+          e.stopPropagation();
+          drawing = true;
+          last = pos(e);
+          paint(null, last);
+          try { cvs.setPointerCapture(e.pointerId); } catch { }
+        });
+        cvs.addEventListener('pointermove', e => {
+          if (!drawing) return;
+          const p = pos(e);
+          paint(last, p);
+          last = p;
+        });
+        cvs.addEventListener('pointerup', () => { drawing = false; last = null; });
+        cvs.addEventListener('pointerleave', () => { drawing = false; last = null; });
+
+        box.querySelector('#mask-size').addEventListener('input', e => {
+          box.querySelector('#mask-size-v').textContent = e.target.value;
+        });
+        const eraseBtn = box.querySelector('#mask-erase');
+        eraseBtn.addEventListener('click', () => {
+          erasing = !erasing;
+          eraseBtn.classList.toggle('on', erasing);
+          box.querySelector('#mask-tip').textContent = erasing ? '橡皮：擦掉涂过的区域' : '按住左键涂抹；空白 = 不重绘';
+        });
+        box.querySelector('#mask-clear').addEventListener('click', () => {
+          ctx.clearRect(0, 0, cvs.width, cvs.height);
+        });
+        box.querySelector('#mask-invert').addEventListener('click', () => {
+          // 反选：把「涂过的」变「没涂」，全图铺满再挖掉原遮罩
+          const tmp = document.createElement('canvas');
+          tmp.width = cvs.width; tmp.height = cvs.height;
+          const tctx = tmp.getContext('2d');
+          tctx.drawImage(cvs, 0, 0);
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.clearRect(0, 0, cvs.width, cvs.height);
+          ctx.fillStyle = 'rgba(255,74,110,.62)';
+          ctx.fillRect(0, 0, cvs.width, cvs.height);
+          ctx.globalCompositeOperation = 'destination-out';
+          ctx.drawImage(tmp, 0, 0);
+          ctx.globalCompositeOperation = 'source-over';
+        });
+
+        // 已有遮罩：把白色区域铺回红色，方便继续改
+        if (n.data.maskSrc) {
+          const old = new Image();
+          old.src = n.data.maskSrc;
+          old.onload = () => {
+            const t = document.createElement('canvas');
+            t.width = cvs.width; t.height = cvs.height;
+            const tc = t.getContext('2d');
+            tc.drawImage(old, 0, 0, cvs.width, cvs.height);
+            const data = tc.getImageData(0, 0, cvs.width, cvs.height);
+            for (let i = 0; i < data.data.length; i += 4) {
+              const white = data.data[i] > 127;
+              data.data[i] = 255; data.data[i + 1] = 74; data.data[i + 2] = 110;
+              data.data[i + 3] = white ? 158 : 0;
+            }
+            tc.putImageData(data, 0, 0);
+            ctx.drawImage(t, 0, 0);
+          };
+        }
+
+        box.querySelector('#mask-remove').addEventListener('click', () => {
+          delete n.data.maskSrc;
+          queueSave();
+          refreshNode(n);
+          close();
+          V.toast('遮罩已移除', 'ok');
+        });
+
+        box.querySelector('#mask-save').addEventListener('click', () => {
+          const src32 = ctx.getImageData(0, 0, cvs.width, cvs.height).data;
+          // 缩放到原图尺寸，输出「白=重绘、黑=保留」的 1 位掩码
+          const tiny = document.createElement('canvas');
+          tiny.width = cvs.width; tiny.height = cvs.height;
+          const tctx = tiny.getContext('2d');
+          const id = tctx.createImageData(cvs.width, cvs.height);
+          let painted = 0;
+          for (let i = 0; i < cvs.width * cvs.height; i++) {
+            const on = src32[i * 4 + 3] > 24;
+            if (on) painted++;
+            const v = on ? 255 : 0;
+            id.data[i * 4] = v; id.data[i * 4 + 1] = v; id.data[i * 4 + 2] = v; id.data[i * 4 + 3] = 255;
+          }
+          tctx.putImageData(id, 0, 0);
+
+          const out = document.createElement('canvas');
+          out.width = natW; out.height = natH;
+          const octx = out.getContext('2d');
+          octx.imageSmoothingEnabled = false;
+          octx.drawImage(tiny, 0, 0, natW, natH);
+
+          if (!painted) {
+            V.toast('一笔都没涂，遮罩没有意义；想清空请点「移除遮罩」', 'err');
+            return;
+          }
+          let dataUrl = '';
+          try { dataUrl = out.toDataURL('image/png'); } catch { }
+          if (!dataUrl) return V.toast('导出遮罩失败（画布被浏览器限制）', 'err');
+          n.data.maskSrc = dataUrl;
+          queueSave();
+          refreshNode(n);
+          close();
+          V.toast('遮罩已保存，下次生成会一起提交', 'ok');
+        });
+      }
+    });
+  }
+
+  /* ---------------- 图片组 ---------------- */
+  function groupItems(n) {
+    return Array.isArray(n.data.items) ? n.data.items : [];
+  }
+
+  function expandGroup(n) {
+    const items = groupItems(n);
+    if (!items.length) return V.toast('这个组里还没有图', 'err');
+    V.openModal({
+      title: '图片组 · ' + items.length + ' 张',
+      sub: '点一张设为主图；也可以「拆开」变成独立图片节点',
+      wide: true,
+      body: `<div class="group-grid">${items.map((it, i) => `
+        <figure class="group-cell ${i === (n.data.active || 0) ? 'on' : ''}" data-gi="${i}">
+          <img src="${esc(it.src)}" alt="">
+          <figcaption>${esc(it.imageId || '未入库')}</figcaption>
+        </figure>`).join('')}</div>`,
+      footer: `<button class="btn" data-close>关闭</button>
+               <button class="btn primary" id="g-split-all">拆成 ${items.length} 个节点</button>`,
+      onMount: (box, close) => {
+        box.querySelectorAll('[data-gi]').forEach(el => {
+          el.addEventListener('click', () => {
+            n.data.active = Number(el.dataset.gi);
+            queueSave();
+            refreshNode(n);
+            close();
+          });
+        });
+        box.querySelector('#g-split-all').addEventListener('click', () => {
+          close();
+          splitGroup(n);
+        });
+      }
+    });
+  }
+
+  function splitGroup(n) {
+    const items = groupItems(n);
+    if (!items.length) return;
+    pushHistory();
+    const baseX = n.x, baseY = n.y + (n.h || 220) + 40;
+    items.forEach((it, i) => {
+      addNode('image', {
+        pos: { x: baseX + i * 300, y: baseY },
+        data: { src: it.src, label: it.imageId || '生成结果', imageId: it.imageId || '' }
+      });
+    });
+    V.toast(`已拆出 ${items.length} 个图片节点`, 'ok');
+  }
+
   function typeLabel(t) {
-    return { prompt: '提示词', image: '图片', ref: '参考', gen: '输出', simple: '简易', wf: '节点' }[t] || t;
+    return { prompt: '提示词', image: '图片', ref: '参考', gen: '输出', simple: '简易', wf: '节点', group: '图片组' }[t] || t;
   }
 
   function nodeTitle(n) {
@@ -458,6 +977,7 @@ window.Canvas = (function () {
     if (n.type === 'simple') return n.data.wfName || '简易节点';
     if (n.type === 'gen') return n.data.wfName || (n.data.workflowId ? '输出' : '输出');
     if (n.type === 'wf') return n.data.title || n.data.cls || '节点';
+    if (n.type === 'group') return `图片组 · ${groupItems(n).length} 张`;
     return n.data.label || (n.type === 'ref' ? '参考图' : '图片');
   }
 
@@ -519,6 +1039,13 @@ window.Canvas = (function () {
         if (act === 'cancel') cancelRun(n);
         if (act === 'addref') addRefToOutput(n);
         if (act === 'pick' && n.type === 'simple') pickImageFor(n);
+        if (act === 'retry') runGen(n);
+        if (act === 'mask') openMaskEditor(n);
+        if (act === 'batch-') { n.data.batch = Math.max(1, (Number(n.data.batch) || 1) - 1); queueSave(); refreshNode(n); }
+        if (act === 'batch+') { n.data.batch = Math.min(8, (Number(n.data.batch) || 1) + 1); queueSave(); refreshNode(n); }
+        if (act === 'g-pick') { n.data.active = Number(btn.dataset.i); queueSave(); refreshNode(n); }
+        if (act === 'g-expand') expandGroup(n);
+        if (act === 'g-split') splitGroup(n);
       });
     });
 
@@ -562,6 +1089,18 @@ window.Canvas = (function () {
       ta.addEventListener('pointerdown', e => e.stopPropagation());
       ta.addEventListener('wheel', e => e.stopPropagation());
     });
+
+    const seedFix = el.querySelector('[data-seedfix]');
+    if (seedFix) {
+      seedFix.addEventListener('change', () => {
+        n.data.seedFixed = seedFix.checked;
+        if (seedFix.checked && !Number.isFinite(Number(n.data.seed))) {
+          n.data.seed = Math.floor(Math.random() * 1125899906842624);
+        }
+        queueSave();
+        refreshNode(n);
+      });
+    }
 
     el.querySelectorAll('[data-role]').forEach(b => {
       b.addEventListener('click', e => {
@@ -616,9 +1155,18 @@ window.Canvas = (function () {
 
   function selectNode(id, add) {
     if (!add) selected.clear();
+    else if (selected.has(id) && selected.size > 1) {
+      // Shift 再点一次 = 取消这个节点
+      selected.delete(id);
+      world.querySelectorAll('.cv-node').forEach(el =>
+        el.classList.toggle('sel', selected.has(el.dataset.id)));
+      drawMinimap();
+      return;
+    }
     selected.add(id);
     world.querySelectorAll('.cv-node').forEach(el =>
       el.classList.toggle('sel', selected.has(el.dataset.id)));
+    drawMinimap();
   }
 
   /* ============================================================
@@ -629,9 +1177,17 @@ window.Canvas = (function () {
 
     vp.addEventListener('pointerdown', e => {
       if (e.target.closest('.cv-node')) return;
+      if (e.target.closest('.cv-map') || e.target.closest('.cv-hud')) return;
+      // Shift + 拖空白 = 框选；普通拖 = 平移
+      if (e.button === 0 && e.shiftKey && !spaceDown) {
+        e.preventDefault();
+        startBoxSelect(e);
+        return;
+      }
       if (e.button === 0 && !spaceDown) {
         selected.clear();
         world.querySelectorAll('.cv-node.sel').forEach(el => el.classList.remove('sel'));
+        drawMinimap();
       }
       startDrag(e, 'pan');
     });
@@ -667,6 +1223,7 @@ window.Canvas = (function () {
     world.style.transform = `translate(${cv.view.x}px, ${cv.view.y}px) scale(${cv.view.k})`;
     const z = host?.querySelector('#cv-zoom');
     if (z) z.textContent = Math.round(cv.view.k * 100) + '%';
+    drawMinimap();
   }
 
   function screenToWorld(cx, cy) {
@@ -684,7 +1241,11 @@ window.Canvas = (function () {
       ox: kind === 'node' ? n.x : cv.view.x,
       oy: kind === 'node' ? n.y : cv.view.y,
       moved: false,
-      hist: false
+      hist: false,
+      // 拖一个选中的节点时，整组一起动
+      group: (kind === 'node' && selected.size > 1 && selected.has(n.id))
+        ? cv.nodes.filter(x => selected.has(x.id)).map(x => ({ n: x, x: x.x, y: x.y }))
+        : null
     };
   }
 
@@ -704,6 +1265,7 @@ window.Canvas = (function () {
       renderEdges();
       return;
     }
+    if (boxSel) { updateBoxSelect(e); return; }
     if (!drag) {
       if (link) return;
       return;
@@ -719,13 +1281,17 @@ window.Canvas = (function () {
       return;
     }
     if (drag.kind === 'node') {
-      const n = drag.node;
       if (!drag.hist) { pushHistory(); drag.hist = true; }   // 拖动前留一份快照
-      n.x = Math.round(drag.ox + dx);
-      n.y = Math.round(drag.oy + dy);
-      const el = world.querySelector(`.cv-node[data-id="${n.id}"]`);
-      if (el) { el.style.left = n.x + 'px'; el.style.top = n.y + 'px'; }
+      const ddx = Math.round(dx), ddy = Math.round(dy);
+      const list = drag.group || [{ n: drag.node, x: drag.ox, y: drag.oy }];
+      list.forEach(it => {
+        it.n.x = it.x + ddx;
+        it.n.y = it.y + ddy;
+        const el = world.querySelector(`.cv-node[data-id="${it.n.id}"]`);
+        if (el) { el.style.left = it.n.x + 'px'; el.style.top = it.n.y + 'px'; }
+      });
       renderEdges();
+      drawMinimap();
     }
     if (drag.kind === 'resize') {
       const n = drag.node;
@@ -743,6 +1309,7 @@ window.Canvas = (function () {
   }
 
   function onUp(e) {
+    if (boxSel) { endBoxSelect(); }
     if (link) {
       const target = document.elementFromPoint(e.clientX, e.clientY)?.closest('.cv-node');
       const inPort = document.elementFromPoint(e.clientX, e.clientY)?.closest('.cv-port.in');
@@ -779,6 +1346,19 @@ window.Canvas = (function () {
       return;
     }
     if (mod && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); redo(); return; }
+    if (mod && (e.key === 'c' || e.key === 'C')) {
+      if (copySelection()) { e.preventDefault(); V.toast(`已复制 ${selected.size} 个节点`, 'ok'); }
+      return;
+    }
+    if (mod && (e.key === 'v' || e.key === 'V')) {
+      if (pasteClipboard()) { e.preventDefault(); V.toast('已粘贴', 'ok'); }
+      return;
+    }
+    if (mod && (e.key === 'd' || e.key === 'D')) {
+      e.preventDefault();
+      if (copySelection() && pasteClipboard()) V.toast('已再制一份', 'ok');
+      return;
+    }
     if (mod && e.key === 'a') {
       e.preventDefault();
       selected = new Set(cv.nodes.map(n => n.id));
@@ -832,7 +1412,8 @@ window.Canvas = (function () {
       ref: { w: 220, data: { src: '', label: '参考图' } },
       gen: { w: 320, data: { wfName: '', model: '', status: 'idle', statusText: '' } },
       simple: { w: 300, data: { wfName: '', text: '', neg: '', src: '', imageSlots: 0, status: 'idle', statusText: '' } },
-      wf: { w: 240, data: {} }
+      wf: { w: 240, data: {} },
+      group: { w: 300, data: { items: [], active: 0, label: '图片组' } }
     }[type];
     const n = { ...base, ...defaults, ...extra, data: { ...defaults.data, ...(extra.data || {}) } };
     pushHistory();
@@ -994,7 +1575,11 @@ window.Canvas = (function () {
     }
 
     n.data.canceled = false;   // 新的一轮，清掉上一次的取消标记
+    n.data.statusText = '';
     const setStatus = (text, st = 'running', step, total) => nodeStatus(n, text, st, step, total);
+
+    const batch = Math.max(1, Math.min(8, Number(n.data.batch) || 1));
+    const seedVal = n.data.seedFixed && Number.isFinite(Number(n.data.seed)) ? Number(n.data.seed) : null;
 
     setStatus('准备中…');
     try {
@@ -1017,26 +1602,62 @@ window.Canvas = (function () {
         names.push(await Comfy.uploadImage(blob, `vault_${Date.now()}_${i}.png`));
       }
 
-      const applied = Comfy.applyInputs(api, { prompt: positive, negative, images: names });
-      n.data.imageSlots = applied.slots;
-
-      if (names.length && applied.slots === 0) {
-        throw new Error('这个工作流里没有 LoadImage 节点，参考图用不上');
+      // 上传遮罩（挂在参考图/图片节点上，白=重绘）
+      let maskName = '';
+      const masked = refs.find(r => r.data && r.data.maskSrc);
+      if (masked) {
+        setStatus('上传遮罩…');
+        const mb = await fetch(masked.data.maskSrc).then(r => r.blob()).catch(() => null);
+        if (mb) maskName = await Comfy.uploadImage(mb, `mask_${Date.now()}.png`);
       }
-      if (applied.dropped) {
-        V.toast(`工作流只有 ${applied.slots} 个图位，多出的 ${applied.dropped} 张参考图没用上`, 'err');
+
+      const collected = [];
+      let lastApplied = null;
+
+      for (let bi = 0; bi < batch; bi++) {
+        if (n.data.canceled) break;
+        const tag = batch > 1 ? `第 ${bi + 1}/${batch} 张 · ` : '';
+
+        const applied = Comfy.applyInputs(api, {
+          prompt: positive, negative, images: names,
+          mask: maskName || undefined,
+          seed: seedVal === null ? undefined : seedVal
+        });
+        lastApplied = applied;
+        n.data.imageSlots = applied.slots;
+
+        if (bi === 0) {
+          // 只提示一次，别每张都弹
+          if (names.length && applied.slots === 0 && !(applied.slotMap && applied.slotMap.frames && applied.slotMap.frames.first_frame)) {
+            throw new Error(applied.mode === 'slot'
+              ? '这个工作流没有 ref_image_xx 槽位，参考图放不进去'
+              : '这个工作流里没有 LoadImage 节点，参考图用不上');
+          }
+          if (maskName && applied.slotMap && !applied.slotMap.mask) {
+            V.toast('工作流没有 ref_mask 槽位，遮罩不会生效（相当于只换了图）', 'err');
+          }
+          if (applied.dropped) {
+            V.toast(`工作流只有 ${applied.slots} 个图位，多出的 ${applied.dropped} 张参考图没用上`, 'err');
+          }
+        }
+
+        const res = await Comfy.run(
+          applied.api,
+          (t, st, step, total) => setStatus(tag + t, st || 'running', step, total),
+          x => { if (x.phase === 'step') setStatus(`${tag}生成中 ${x.step}/${x.total}`, 'running', x.step, x.total); },
+          // 记下 promptId：页面刷新后靠它把任务接回来
+          (pid) => { n.data.promptId = pid; queueSave(); }
+        );
+
+        n.data.promptId = '';
+        collected.push(...(res.images || []));
+        if (batch > 1) nodeStatus(n, `已完成 ${bi + 1}/${batch}`, 'running', bi + 1, batch);
       }
 
-      const res = await Comfy.run(
-        applied.api,
-        (t, st, step, total) => setStatus(t, st || 'running', step, total),
-        x => { if (x.phase === 'step') setStatus(`生成中 ${x.step}/${x.total}`, 'running', x.step, x.total); },
-        // 记下 promptId：页面刷新后靠它把任务接回来
-        (pid) => { n.data.promptId = pid; queueSave(); }
-      );
-
-      n.data.promptId = '';
-      await finishGen(n, res, { api, positive, negative, refs, wf });
+      if (!collected.length) {
+        throw new Error(n.data.canceled ? '已取消' : '一张都没拿到（任务可能被中断）');
+      }
+      await finishGen(n, { images: collected }, { api, positive, negative, refs, wf, applied: lastApplied });
     } catch (e) {
       // 用户主动取消时，别把中断报成红色错误
       if (n.data.canceled) {
@@ -1090,6 +1711,7 @@ window.Canvas = (function () {
     const meta = (api && Parse.parseComfy(api)) || {};
     const refIds = refs.map(r => r.data.refId || r.data.label).filter(Boolean);
 
+    n.data.statusText = '';
     nodeStatus(n, '入库中…', 'running');
     const savedIds = [];
     for (const item of (res.images || [])) {
@@ -1105,25 +1727,40 @@ window.Canvas = (function () {
       }
     }
 
-    const first = res.images && res.images[0] && res.images[0].blob;
-    if (!first) {
+    const blobs = (res.images || []).map(x => x && x.blob).filter(Boolean);
+    if (!blobs.length) {
       nodeStatus(n, '完成但没有拿到图片（去「引擎出图」里手动导入）', 'idle');
       n.data.promptId = '';
       queueSave();
       return;
     }
-    const url = URL.createObjectURL(first);
+
+    // 每张都生成一个稳定 URL，图片组和结果节点都用它
+    const items = blobs.map((b, i) => ({
+      src: URL.createObjectURL(b),
+      imageId: savedIds[i] || ''
+    }));
+
+    const url = items[0].src;
     n.data.resultSrc = url;
     n.data.status = 'done';
-    n.data.statusText = `完成 · ${res.images.length} 张${savedIds.length ? ' · 已入库' : ''}`;
     n.data.prog = null;
+    n.data.promptId = '';
 
-    addNode('image', {
-      pos: { x: n.x + (n.w || 300) + 80, y: n.y },
-      data: { src: url, label: savedIds[0] || '生成结果', imageId: savedIds[0] || '' }
-    });
+    if (items.length > 1) {
+      // 多张 → 一个图片组节点，别在画布上摊一地
+      addNode('group', {
+        pos: { x: n.x + (n.w || 300) + 80, y: n.y },
+        data: { items, active: 0, label: `图片组 · ${items.length} 张` }
+      });
+    } else {
+      addNode('image', {
+        pos: { x: n.x + (n.w || 300) + 80, y: n.y },
+        data: { src: url, label: savedIds[0] || '生成结果', imageId: savedIds[0] || '' }
+      });
+    }
 
-    nodeStatus(n, `完成 · 已存 ${savedIds.length} 张${res.viaWs ? ' · WS' : ''}${res.resumed ? ' · 刷新后接回' : ''}`, 'done');
+    nodeStatus(n, `完成 · ${items.length} 张 · 已存 ${savedIds.length} 张${res.viaWs ? ' · WS' : ''}${res.resumed ? ' · 刷新后接回' : ''}`, 'done');
     queueSave();
     if (savedIds.length) {
       await V.reload();

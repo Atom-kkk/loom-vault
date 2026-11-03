@@ -285,6 +285,50 @@ shallow depth of field, photorealistic, fine skin detail, subtle film grain
 | UI 格式（ComfyUI 里普通 Save） | 读 `nodes[].pos` 还原位置、`links[]` 还原连线、`widgets_values` 显示参数 | ✓ 自动转 API 后可以 |
 | API 格式（Export (API)） | 按依赖深度自动分层布局，输入连成边 | ✓ |
 
+**工作流槽位协议（让 UI 跟着工作流长）**
+
+工作流里有哪些参数值得用户改，由工作流自己说了算——在 ComfyUI 里把节点的**标题**（`_meta.title`）改成下面的保留名即可：
+
+| 槽位名 | 干什么 | 写进哪个输入 |
+|---|---|---|
+| `prompt` | 正向提示词 | 文本节点的 `text` / `value` |
+| `negative_prompt` | 负向提示词 | 同上 |
+| `seed` / `steps` / `cfg` / `denoise` | 采样参数 | 数值节点的 `value` / `seed` |
+| `width` / `height` / `batch` / `duration` | 尺寸、张数、时长 | 数值节点 |
+| `ref_image_01` ~ `ref_image_09` | 参考图，**编号就是优先级** | `LoadImage.image` |
+| `ref_mask` | 重绘遮罩（白 = 重绘） | `LoadImage.image` |
+| `first_frame` / `last_frame` | 首帧 / 尾帧 | `LoadImage.image` |
+
+**能力不用另外声明，标了什么就是什么**：
+
+| 标了 | 自动推导出的能力 |
+|---|---|
+| 只有 `prompt` | 文生图 |
+| 有任意 `ref_image_NN` | 图生图（显示「N 个图位」） |
+| 有 `ref_mask` | 遮罩重绘（图片节点出现画笔） |
+| 有 `first_frame` + `last_frame` | 首尾帧 |
+| 只有 `first_frame` | 视频（首帧） |
+
+举一个 API 格式里的样子（在 ComfyUI 里就是把节点标题改成 `prompt`、`seed`、`ref_image_01`）：
+
+```json
+{
+  "298": { "class_type": "PrimitiveStringMultiline", "inputs": { "value": "…" }, "_meta": { "title": "prompt" } },
+  "301": { "class_type": "PrimitiveInt", "inputs": { "value": 4747 }, "_meta": { "title": "seed" } },
+  "289": { "class_type": "LoadImage", "inputs": { "image": "a.png" }, "_meta": { "title": "ref_image_01" } }
+}
+```
+
+细节：
+
+- 名字**大小写、空格、短横线都宽容**（`Ref-Image 01` 也认）
+- 参考图按编号**数值**排序（`_2` 排在 `_10` 前面），编号就是「第一张图进哪一路」
+- 同一个槽位标了两次 → 取第一个并提示；槽位节点没有可写输入 → 提示哪个节点有问题
+- **没标注也能用**：会退回旧的「按节点类型 + id 顺序猜」规则，画布上标「按类型猜 · 未标注」，多图位/遮罩场景建议补标注
+- 从 UI 格式导入时节点标题会跟着转进 `_meta.title`，所以**在 ComfyUI 里标好再导出**就能一路带过来
+
+> 为什么值得标：不加标注时，多图位、遮罩、首尾帧这些「长得都像 `LoadImage`」的节点只能靠 id 顺序猜，一定会错位。标一次，之后 UI、遮罩、批量都能对上。
+
 **画布极简**：画布里只有简易节点（和从图库送进来的参考图），所有节点都能用右下角手柄**自由拉伸**（左右上下都可）。
 
 **简易节点包**：顶栏「简易节点包」，只留「已收录」清单——导入过的工作流都会自动收在这里，点一下就能放上画布生图，不掺任何模板配置（模型、LoRA、参数都在 ComfyUI 里定）。
@@ -405,17 +449,41 @@ ai-image-vault/
     └── manage.js       # 模型库、LoRA、工作流、分类、设置
 ```
 
+```
+tests/
+  js/   comfy.test.js  # 槽位解析、applyInputs、UI→API 转换、插件种子兜底
+  py/   test_serve.py  # 模型扫描、extra_model_paths.yaml、端口识别、重启安全
+scripts/test.sh        # 一条命令跑完两套（./scripts/test.sh）
+```
+
 没有构建步骤，改完文件刷新浏览器即可生效（`serve.py` 已禁用缓存）。
 
 ---
 
 ## 快捷键
 
+**图库**
+
 | 键 | 作用 |
 |---|---|
 | `U` | 打开上传 |
 | `←` / `→` | 灯箱翻页 |
 | `Esc` | 关闭弹窗 / 灯箱 |
+
+**画布**
+
+| 键 | 作用 |
+|---|---|
+| `Shift` + 拖空白 | 框选（普通拖 = 平移） |
+| `Shift` + 点节点 | 加选 / 取消选中 |
+| `⌘A` / `Ctrl+A` | 全选 |
+| `⌘C` / `⌘V` | 复制 / 粘贴选中节点（连同它们之间的连线） |
+| `⌘D` | 原地再制一份 |
+| `Delete` | 删除选中 |
+| `⌘Z` / `⇧⌘Z` | 撤销 / 重做 |
+| 拖节点右下角 | 自由拉伸 |
+| `空格` + 拖 | 临时平移（节点很多时好用） |
+| 右下角小地图 | 点击 / 拖动跳转视口 |
 
 ---
 
@@ -426,7 +494,7 @@ ai-image-vault/
 - **智能体记忆**：现在只记「上次用谁」，可以扩成每张图记住「当初是谁写的」，方便回溯风格来源
 - **批量选择与批量改分类**：`state.images` 是纯数组，加个 `selected: Set` 就能做批量操作条
 - **提示词版本 diff**：`prompt.versionListHTML()` 里已有逐版渲染，接入字符级 diff 即可对比两版差异
-- **直接投递 ComfyUI**：模型里已存 `endpoint` 与工作流 JSON，`POST /prompt` 即可排队出图（需要把工作流里的占位符映射到表单字段）
+- **槽位标注的可视化编辑器**：现在是「去 ComfyUI 改节点标题」，也可以做成在织造所里点节点 → 选槽位，直接改工作流 JSON
 - **ZIP 整库备份**：`DB.exportMeta()` 只导元数据，配上 `blobs` 表可以打包成完整备份
 - **多设备同步**：数据层集中在 `db.js`，把这一层换成远程 API 就能变多人共享的素材库
 
