@@ -40,5 +40,10 @@ if (!existsSync(path.join(pySrc, 'bin', 'python3'))) {
   process.exit(1);
 }
 console.log('  python runtime 就位（extraResources: runtime/python → resources/python）');
+if (!existsSync(path.join(desktop, 'runtime', 'python-win', 'bin', 'python.exe'))) {
+  console.warn('  ⚠ 未找到 runtime/python-win/bin/python.exe —— Windows 包会退回系统 Python');
+} else {
+  console.log('  windows python runtime 就位（win.extraResources: runtime/python-win → resources/python）');
+}
 
 console.log('staged ->', dst);

@@ -74,7 +74,7 @@ function prepareRuntime() {
   const src = path.join(process.resourcesPath, 'python');
   const dst = path.join(app.getPath('userData'), 'runtime', 'python');
   if (!fs.existsSync(src)) return;                       // 没打进去就算了（退回系统 Python）
-  if (fs.existsSync(path.join(dst, 'bin'))) return;      // 已经复制过
+  if (fs.existsSync(dst) && fs.readdirSync(dst).length) return;   // 已经复制过
   copyDir(src, dst);
 }
 
@@ -96,8 +96,13 @@ function bundledPython() {
        path.join(process.resourcesPath, 'python')]
     : [path.join(__dirname, 'runtime', 'python')];
   for (const r of roots) {
-    const exe = path.join(r, 'bin', IS_WIN ? 'python.exe' : 'python3');
-    if (fs.existsSync(exe)) return { cmd: exe, args: [], version: '', bundled: true };
+    // mac 的 standalone 发行版是 bin/python3；Windows 版 python.exe 在根目录
+    //（我们打包时也挪进 bin/，两种布局都认，谁存在用谁）
+    const candidates = IS_WIN
+      ? [path.join(r, 'bin', 'python.exe'), path.join(r, 'python.exe')]
+      : [path.join(r, 'bin', 'python3')];
+    const exe = candidates.find(p => fs.existsSync(p));
+    if (exe) return { cmd: exe, args: [], version: '', bundled: true };
   }
   return null;
 }

@@ -33,10 +33,6 @@
       {
         "from": "staging",
         "to": "web"
-      },
-      {
-        "from": "runtime/python",
-        "to": "python"
       }
     ],
     "mac": {
@@ -49,14 +45,26 @@
       "darkModeSupport": true,
       "extendInfo": {
         "LSMinimumSystemVersion": "11.0"
-      }
+      },
+      "extraResources": [
+        {
+          "from": "runtime/python",
+          "to": "python"
+        }
+      ]
     },
     "win": {
       "target": [
         "nsis",
-        "portable"
+        "zip"
       ],
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "extraResources": [
+        {
+          "from": "runtime/python-win",
+          "to": "python"
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,
