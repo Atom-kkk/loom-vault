@@ -257,20 +257,27 @@ try {
     await shot(file, note);
   }
 
-  /* ============ 设置页：分三段截 ============ */
-  await ev(`(async()=>{ await Vault.go('settings'); return 1 })()`);
-  await sleep(1400);
-  await shot('17-settings-install', '设置页顶部：一键安装 ComfyUI');
+  /* ============ 本地配置（原「设置」里的引擎段 + 画布「高级选项」的模型路径） ============ */
+  await ev(`(async()=>{ await Vault.go('local'); return 1 })()`);
+  await sleep(1800);
+  await shot('15-local-engine', '本地配置：一键安装 / 引擎目录 / 启动与重启');
 
   const scrollTo = async (y) => {
     await ev(`(() => { const v = document.querySelector('#view'); if (v) v.scrollTop = ${y}; return 1 })()`);
     await sleep(700);
   };
-  await scrollTo(620);
-  await shot('18-settings-comfy', '设置页：服务地址 / 引擎状态 / 模型路径');
+  await scrollTo(660);
+  await shot('16-local-paths', '本地配置：模型目录（默认就是 ComfyUI 的 models）');
 
-  await scrollTo(1240);
-  await shot('19-settings-ai', '设置页：AI 服务商与智能体');
+  /* ============ AI 智能体 ============ */
+  await ev(`(async()=>{ await Vault.go('ai'); return 1 })()`);
+  await sleep(1300);
+  await shot('19-ai-agents', 'AI 智能体：服务商与智能体（不配也能出图）');
+
+  /* ============ 设置（只剩数据与关于） ============ */
+  await ev(`(async()=>{ await Vault.go('settings'); return 1 })()`);
+  await sleep(1200);
+  await shot('25-settings', '设置：数据备份、存储占用与关于');
 
   /* ============ 资源监控面板 ============ */
   await ev(`(async()=>{ await Vault.go('gallery'); return 1 })()`);
@@ -313,6 +320,19 @@ try {
   await ev(`document.querySelector('[data-cv="pack"]').click()`);
   await sleep(1000);
   await shot('21-simple-pack', '简易节点包：一键放一套三件套');
+  await ev(`document.querySelector('#modal')?.classList.add('hidden')`);
+  await sleep(300);
+
+  /* ============ 加参考图弹窗（底栏「参考图」） ============ */
+  await ev(`(async()=>{ await Vault.go('canvas'); return 1 })()`);
+  await sleep(900);
+  await ev(`document.querySelector('[data-cv="add-ref"]').click()`);
+  await sleep(1600);
+  await ev(`document.querySelector('[data-lib="outfits"]')?.click()`);
+  await sleep(1200);
+  await ev(`(() => { const g = document.querySelectorAll('#ref-grid .refpick'); g[0]?.click(); g[2]?.click(); return 1 })()`);
+  await sleep(400);
+  await shot('26-canvas-add-ref', '加参考图：图库 / 三个参考图库 / 本地文件，可多选');
   await ev(`document.querySelector('#modal')?.classList.add('hidden')`);
   await sleep(300);
 

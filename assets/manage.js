@@ -870,15 +870,202 @@
       : `<span class="entity-tag warn">缺 Key</span>`;
   }
 
-  V.registerView('settings', {
-    title: '设置',
-    sub: 'AI 服务商与智能体、数据备份与本地存储',
+  /* ============================================================
+     本地配置：ComfyUI 引擎 + 模型目录
+     （原来是「设置」页的第一段和画布「高级选项」弹窗，两处内容重了，合并到这里）
+     ============================================================ */
+  const MODEL_PATH_FIELDS = [
+    { key: 'checkpoints', label: '底模（checkpoints）', hint: '.safetensors / .ckpt 完整模型' },
+    { key: 'diffusion_models', label: '扩散模型（diffusion_models）', hint: 'Flux、Krea、Qwen 等分离式 UNET' },
+    { key: 'clip', label: 'CLIP（clip）', hint: '文本编码器' },
+    { key: 'text_encoders', label: '文本编码器（text_encoders）', hint: 'Flux 等新模型的 T5 / CLIP' },
+    { key: 'vae', label: 'VAE', hint: '.safetensors' },
+    { key: 'loras', label: 'LoRA（loras）', hint: 'LoRA 文件所在目录' },
+  ];
+
+  /** 模型路径那一坨（六类 + 自动识别提示），本地配置页用 */
+  function modelPathsHTML(scan, configured) {
+    const found = scan.found || {};
+    const counts = scan.files || {};
+    const partials = scan.partial || {};
+    const valOf = k => configured[k] || found[k] || '';
+    const isAuto = k => !!found[k] && (!configured[k] || configured[k] === found[k]);
+    const keys = MODEL_PATH_FIELDS.map(f => f.key);
+    const autoKeys = keys.filter(isAuto);
+    // 手工配过、且和自动识别结果不一样的：这些是用户自己指定的目录，不能被当成「没找到」
+    const setKeys = keys.filter(k => configured[k] && configured[k] !== found[k]);
+    const rootsTxt = (scan.roots || []).map(r => r.label).join(' · ');
+    const ownModels = ((scan.comfy_dir || 'ComfyUI').replace(/\/ComfyUI\/?$/, '')) + '/models';
+
+    const field = f => `
+      <div class="field">
+        <label>${esc(f.label)}${isAuto(f.key)
+        ? '<em class="auto-tag">自动识别</em>'
+        : (configured[f.key] ? '<em class="auto-tag custom">手动指定</em>' : '')}</label>
+        <input type="text" data-path="${f.key}" placeholder="留空 = 用自动识别到的目录"
+               value="${esc(valOf(f.key))}">
+        <span class="hint">${isAuto(f.key)
+        ? `已找到 ${counts[f.key] || 0} 个模型${partials[f.key] ? `（另有 ${partials[f.key]} 个正在下载）` : ''} · ${esc(f.hint)}`
+        : esc(f.hint)}</span>
+      </div>`;
+
+    return `
+      <div class="adv-auto ${(autoKeys.length || setKeys.length) ? '' : 'none'}">
+        ${autoKeys.length
+        ? `✓ 已自动识别 ${autoKeys.length} 类模型目录${rootsTxt ? `（扫描：${esc(rootsTxt)}）` : ''}，直接点「保存路径」即可生效`
+        : setKeys.length
+          ? `已手动指定 ${setKeys.length} 类模型目录，引擎启动时会写进 <code>extra_model_paths.yaml</code>。想换回自动识别，把对应输入框清空再保存。`
+          : `还没找到模型目录。把模型放进 <code>${esc(ownModels)}</code> 下的 checkpoints / diffusion_models / text_encoders / vae / loras，再刷新这一页就会自动认出来。`}
+      </div>
+      <div class="form-grid">${MODEL_PATH_FIELDS.map(field).join('')}</div>`;
+  }
+
+  V.registerView('local', {
+    title: '本地配置',
+    sub: 'ComfyUI 引擎与模型目录 —— 都跑在这台机器上',
+    actions: () => '',
+    render: async (c) => {
+      let cfg = {};
+      try { cfg = await Comfy.engineStatus(); } catch { cfg = {}; }
+      let scan = { found: {}, files: {}, roots: [] };
+      try { scan = (await Comfy.scanModels()) || scan; } catch { }
+
+      c.innerHTML = `
+        <div style="max-width:820px">
+          <div class="section" style="margin-top:0" id="sec-comfy">
+            <div class="section-title">ComfyUI（本地出图引擎）<span></span></div>
+            <p class="hint" style="margin:0 0 11px">
+              画布的「输出」节点把提示词和参考图写进工作流，交给本地引擎执行。
+              引擎由 Loom 托管：<b>点「生成」时会自动拉起，不用你手动开 ComfyUI</b>。
+            </p>
+
+            <div class="install-box" id="inst-box">
+              <div class="install-top">
+                <div class="install-top-txt">
+                  <b>还没有 ComfyUI？让 Loom 自己装</b>
+                  <span>自动下载源码 → 建独立 Python 环境 → 装 PyTorch 和依赖 → 写好配置。
+                  不碰系统 Python，装完下面目录会自动填好，直接点「启动引擎」。</span>
+                </div>
+                <button class="btn primary" data-act="engine-install">${icon('down', 14)} 下载并安装</button>
+              </div>
+              <div class="install-row">
+                <label>安装位置</label>
+                <input type="text" id="inst-target" placeholder="选一个空间够的目录，约需 15 GB" value="${esc(cfg.install?.default_target || '')}">
+                <button class="btn" data-act="pick-target">选择目录…</button>
+              </div>
+              <div class="install-row">
+                <label>选项</label>
+                <select id="inst-torch">
+                  <option value="auto">PyTorch：自动判断</option>
+                  <option value="cpu">PyTorch：纯 CPU（小、慢）</option>
+                  <option value="cu124">PyTorch：CUDA 12.4</option>
+                  <option value="cu126">PyTorch：CUDA 12.6</option>
+                </select>
+                <label class="install-check"><input type="checkbox" id="inst-mirror" checked> 用国内镜像加速</label>
+              </div>
+              <div class="install-panel" id="inst-panel" hidden>
+                <div class="install-steps" id="inst-steps"></div>
+                <div class="install-bar"><i id="inst-bar-fill"></i></div>
+                <div class="install-msg" id="inst-msg"></div>
+                <pre class="install-log" id="inst-log"></pre>
+                <div class="install-foot">
+                  <span class="hint" id="inst-hint"></span>
+                  <div class="spacer"></div>
+                  <button class="btn sm ghost" data-act="engine-install-cancel" id="inst-cancel">终止</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="form-grid">
+              <div class="field"><label>引擎目录（ComfyUI 安装位置）</label>
+                <input type="text" id="cf-dir" placeholder="~/ComfyUI 或 /path/to/ComfyUI" value="${esc(cfg.comfy_dir || '')}">
+                <span class="hint">填 ComfyUI 根目录（含 main.py 的那个）。找不到会尝试自动探测常见位置。</span></div>
+              <div class="field"><label>端口</label>
+                <input type="text" id="cf-port" value="${esc(String(cfg.port || 8188))}" placeholder="8188"></div>
+              <div class="field"><label>服务地址（一般不用改）</label>
+                <input type="text" id="cf-url" value="${esc(Comfy.base().replace(/^https?:\/\//, ''))}" placeholder="127.0.0.1:8188">
+                <span class="hint">只填主机和端口即可，自动补 http://</span></div>
+              <div class="field"><label>&nbsp;</label>
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                  <button class="btn primary" data-act="engine-start">${icon('spark', 14)} 启动引擎</button>
+                  <button class="btn" data-act="comfy-test">测试连接</button>
+                  <button class="btn" data-act="comfy-save">保存地址</button>
+                  <button class="btn" data-act="engine-restart">重启引擎</button>
+                </div></div>
+            </div>
+            <div id="comfy-stat" style="margin-top:9px;font-size:11.5px;color:var(--text-3)"></div>
+          </div>
+
+          <div class="section" id="sec-paths">
+            <div class="section-title">模型目录<span></span></div>
+            <p class="hint" style="margin:0 0 11px">
+              默认就用 ComfyUI 自己的 <code>models/</code> —— 那里放对了什么都不用改。
+              想把别的盘的模型也挂进来，就在下面填绝对路径，保存后 Loom 会写进
+              <code>extra_model_paths.yaml</code>，<b>不用复制文件</b>。
+            </p>
+            <div id="mp-body">${modelPathsHTML(scan, cfg.paths || {})}</div>
+            <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+              <button class="btn primary" data-act="adv-save-paths">保存路径</button>
+              <button class="btn" data-act="reload-local">重新扫描</button>
+              <span class="hint" id="mp-stat">${cfg.running
+        ? `<span style="color:var(--ok)">✓ 引擎运行中</span>（端口 ${esc(String(cfg.port || 8188))}）`
+        : '引擎未运行 —— 点「生成」时会自动拉起'}</span>
+            </div>
+            ${cfg.log_tail ? `<details style="margin-top:12px"><summary class="hint" style="cursor:pointer">最近启动日志</summary>
+              <pre style="white-space:pre-wrap;font-size:11px;color:var(--text-3);max-height:220px;overflow:auto">${esc(cfg.log_tail)}</pre></details>` : ''}
+          </div>
+        </div>`;
+
+      // 从别的页面切回来时，把还在跑的安装任务接上（进度、日志继续刷）
+      try {
+        const ist = await Comfy.installStatus();
+        if (ist && (ist.running || ist.ok !== null || ist.error)) {
+          renderInstall(ist);
+          if (ist.running) instStartPoll(); else instStopPoll();
+        }
+      } catch { /* serve.py 不在或旧版本，忽略 */ }
+    }
+  });
+
+  V.on('adv-save-paths', async () => {
+    const mapping = {};
+    document.querySelectorAll('[data-path]').forEach(inp => {
+      const v = inp.value.trim();
+      if (v) mapping[inp.dataset.path] = v;
+    });
+    const stat = document.querySelector('#mp-stat');
+    try {
+      await Comfy.setEnginePaths(mapping);
+      let running = false;
+      try { running = !!(await Comfy.engineStatus()).running; } catch { }
+      if (running) {
+        if (stat) stat.innerHTML = '<span style="color:var(--text-2)">已保存，正在重启引擎…</span>';
+        toast('已保存，正在重启引擎让路径生效…', 'ok');
+        Comfy.restartEngine()
+          .then(() => { toast('引擎已重启，模型路径生效', 'ok'); go('local'); })
+          .catch((e) => toast('引擎重启失败：' + e.message, 'err'));
+      } else {
+        toast('路径已保存，下次启动引擎时生效', 'ok');
+        go('local');
+      }
+    } catch (e) {
+      toast('保存失败：' + e.message, 'err');
+    }
+  });
+
+  V.on('reload-local', () => go('local'));
+
+  /* ============================================================
+     AI / 智能体配置
+     （原来是「设置」页里的两段，挪出来单独一页）
+     ============================================================ */
+  V.registerView('ai', {
+    title: 'AI 智能体',
+    sub: '决定「谁来帮你写提示词」—— 不配也能正常出图',
     actions: () => '',
     render: async (c) => {
       const providers = AI.providers();
       const agents = AI.agents();
-      let engineCfg = {};
-      try { engineCfg = await Comfy.engineStatus(); } catch { engineCfg = {}; }
 
       const providerRows = providers.map(p => `
         <div class="entity">
@@ -916,76 +1103,13 @@
 
       c.innerHTML = `
         <div style="max-width:820px">
-          <div class="section" style="margin-top:0" id="sec-comfy">
-            <div class="section-title">ComfyUI（本地出图引擎）<span></span></div>
-            <p class="hint" style="margin:0 0 11px">
-              画布的「输出」节点把提示词和参考图写进工作流，提交给本地引擎执行。
-              引擎由 Loom 托管：<b>点「生成」时会自动拉起，不用你手动开 ComfyUI</b>。
-            </p>
-
-            <div class="install-box" id="inst-box">
-              <div class="install-top">
-                <div class="install-top-txt">
-                  <b>还没有 ComfyUI？让 Loom 自己装</b>
-                  <span>自动下载源码 → 建独立 Python 环境 → 装 PyTorch 和依赖 → 写好配置。
-                  不碰系统 Python，装完下面目录会自动填好，直接点「启动引擎」。</span>
-                </div>
-                <button class="btn primary" data-act="engine-install">${icon('down', 14)} 下载并安装</button>
-              </div>
-              <div class="install-row">
-                <label>安装位置</label>
-                <input type="text" id="inst-target" placeholder="选一个空间够的目录，约需 15 GB" value="${esc(engineCfg.install?.default_target || '')}">
-                <button class="btn" data-act="pick-target">选择目录…</button>
-              </div>
-              <div class="install-row">
-                <label>选项</label>
-                <select id="inst-torch">
-                  <option value="auto">PyTorch：自动判断</option>
-                  <option value="cpu">PyTorch：纯 CPU（小、慢）</option>
-                  <option value="cu124">PyTorch：CUDA 12.4</option>
-                  <option value="cu126">PyTorch：CUDA 12.6</option>
-                </select>
-                <label class="install-check"><input type="checkbox" id="inst-mirror" checked> 用国内镜像加速</label>
-              </div>
-              <div class="install-panel" id="inst-panel" hidden>
-                <div class="install-steps" id="inst-steps"></div>
-                <div class="install-bar"><i id="inst-bar-fill"></i></div>
-                <div class="install-msg" id="inst-msg"></div>
-                <pre class="install-log" id="inst-log"></pre>
-                <div class="install-foot">
-                  <span class="hint" id="inst-hint"></span>
-                  <div class="spacer"></div>
-                  <button class="btn sm ghost" data-act="engine-install-cancel" id="inst-cancel">终止</button>
-                </div>
-              </div>
-            </div>
-
-            <div class="form-grid">
-              <div class="field"><label>引擎目录（ComfyUI 安装位置）</label>
-                <input type="text" id="cf-dir" placeholder="~/ComfyUI 或 /path/to/ComfyUI" value="${esc(engineCfg.comfy_dir || '')}">
-                <span class="hint">填 ComfyUI 根目录（含 main.py 的那个）。找不到会尝试自动探测常见位置。</span></div>
-              <div class="field"><label>端口</label>
-                <input type="text" id="cf-port" value="${esc(String(engineCfg.port || 8188))}" placeholder="8188"></div>
-              <div class="field"><label>服务地址（一般不用改）</label>
-                <input type="text" id="cf-url" value="${esc(Comfy.base().replace(/^https?:\/\//, ''))}" placeholder="127.0.0.1:8188">
-                <span class="hint">只填主机和端口即可，自动补 http://</span></div>
-              <div class="field"><label>&nbsp;</label>
-                <div style="display:flex;gap:8px;flex-wrap:wrap">
-                  <button class="btn primary" data-act="engine-start">${icon('spark', 14)} 启动引擎</button>
-                  <button class="btn" data-act="comfy-test">测试连接</button>
-                  <button class="btn" data-act="comfy-save">保存</button>
-                </div></div>
-            </div>
-            <div id="comfy-stat" style="margin-top:9px;font-size:11.5px;color:var(--text-3)"></div>
-          </div>
-
-          <div class="section" id="sec-providers">
+          <div class="section" style="margin-top:0" id="sec-providers">
             <div class="section-title">AI 服务商<span></span></div>
             <p class="hint" style="margin:0 0 11px">
               接口端点，可以同时放多个：DeepSeek、智谱 GLM、本地 Ollama / LM Studio、OpenAI 或任意 OpenAI 兼容网关。
-              谁便宜谁快就用谁，智能体再去挑。
+              谁便宜谁快就用谁，智能体再去挑。<b>不配也能用，图库和画布不依赖它。</b>
             </p>
-            <div class="entity-list">${providerRows}</div>
+            <div class="entity-list">${providerRows || '<div class="empty-mini">还没有服务商，点下面「添加服务商」</div>'}</div>
             <div style="margin-top:10px">
               <button class="btn sm" data-act="provider-new">${icon('plus', 13)} 添加服务商</button>
             </div>
@@ -996,12 +1120,22 @@
             <p class="hint" style="margin:0 0 11px">
               智能体 = 服务商 + 模型 + 一套人设（系统提示词 + 温度）。出图时在面板顶部选谁写。
             </p>
-            <div class="entity-list">${agentRows}</div>
+            <div class="entity-list">${agentRows || '<div class="empty-mini">还没有智能体，点下面「新建智能体」</div>'}</div>
             <div style="margin-top:10px">
               <button class="btn sm" data-act="agent-new">${icon('plus', 13)} 新建智能体</button>
             </div>
           </div>
+        </div>`;
+    }
+  });
 
+  V.registerView('settings', {
+    title: '设置',
+    sub: '数据备份、存储占用与关于 —— 引擎和 AI 各有单独一页',
+    actions: () => '',
+    render: async (c) => {
+      c.innerHTML = `
+        <div style="max-width:820px">
           <div class="section">
             <div class="section-title">数据<span></span></div>
             <p class="hint" style="margin:0 0 10px">图片与元数据都存在这台机器的浏览器 IndexedDB 里。换设备或重装浏览器前记得导出。</p>
@@ -1016,7 +1150,7 @@
               <b style="color:var(--text)">${V.state.models.length}</b> 个模型 ·
               <b style="color:var(--text)">${V.state.loras.length}</b> 个 LoRA ·
               <b style="color:var(--text)">${V.state.workflows.length}</b> 个工作流 ·
-              <b style="color:var(--text)">${agents.length}</b> 个智能体
+              <b style="color:var(--text)">${AI.agents().length}</b> 个智能体
             </div>
             <div id="set-storage" style="margin-top:8px;font-size:12px;color:var(--text-3)"></div>
           </div>
@@ -1042,14 +1176,6 @@
         ? `已占用 ${U.fmtSize(used)}${quota ? ' / 配额 ' + U.fmtSize(quota) : ''}`
         : '浏览器未提供存储配额信息';
 
-      // 从别的页面切回来时，把还在跑的安装任务接上（进度、日志继续刷）
-      try {
-        const ist = await Comfy.installStatus();
-        if (ist && (ist.running || ist.ok !== null || ist.error)) {
-          renderInstall(ist);
-          if (ist.running) instStartPoll(); else instStopPoll();
-        }
-      } catch { /* serve.py 不在或旧版本，忽略 */ }
     }
   });
 

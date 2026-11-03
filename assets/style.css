@@ -1850,6 +1850,11 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
   border-radius: 4px; padding: 1px 5px; margin-left: 6px;
   vertical-align: 1px;
 }
+/* 手动指定的路径和「自动识别」要能一眼分清 */
+.auto-tag.custom {
+  color: var(--text-3);
+  background: var(--accent-soft);
+}
 .adv-auto {
   font-size: 11.5px; line-height: 1.65;
   color: var(--ok);
@@ -2292,4 +2297,73 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
 @media (max-width: 640px) {
   .sys-panel { right: 10px; left: 10px; width: auto; top: 60px; }
   .sys-badge { max-width: 150px; }
+}
+
+/* ============================================================
+   画布 · 加参考图弹窗
+   ============================================================ */
+.refpick-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.refpick-bar input {
+  flex: 1; height: 34px; padding: 0 11px;
+  border: 1px solid var(--line-input); border-radius: 9px;
+  background: var(--panel-2); color: var(--text); font-size: 12.5px;
+}
+.refpick-bar input:focus { outline: none; border-color: var(--rose); }
+.refpick-bar .hint { white-space: nowrap; font-size: 11.5px; color: var(--text-3); }
+.refpick-bar .hint.on { color: var(--rose-ink); font-weight: 600; }
+
+.refpick-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 9px;
+  max-height: 50vh;
+  overflow: auto;
+  padding: 2px 6px 2px 2px;
+}
+.refpick {
+  position: relative;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  background: var(--panel-2);
+  cursor: pointer;
+  transition: border-color .15s var(--ease), transform .15s var(--ease);
+}
+.refpick:hover { transform: translateY(-1px); border-color: var(--line-strong); }
+.refpick.on { border-color: var(--rose); box-shadow: 0 0 0 3px var(--rose-soft); }
+.refpick img {
+  display: block; width: 100%; aspect-ratio: 3 / 4;
+  object-fit: cover; background: var(--panel-3);
+}
+.refpick i {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 14px 6px 4px;
+  font-style: normal; font-size: 10px; color: #fff;
+  background: linear-gradient(transparent, rgba(0, 0, 0, .58));
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.refpick.on::after {
+  content: '✓';
+  position: absolute; top: 5px; right: 5px;
+  width: 19px; height: 19px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--rose); color: #fff;
+  font-size: 11px; font-weight: 700;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .25);
+}
+
+.empty-mini {
+  padding: 14px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--text-3);
+  text-align: center;
+}
+
+/* 底栏的「+ 提示词 / + 参考图 / + 出图」比图标按钮宽一点，窄屏时收成图标 */
+.cv-add span { white-space: nowrap; }
+@media (max-width: 900px) {
+  .cv-add span { display: none; }
+  .cv-add { padding: 0 8px; }
 }

@@ -210,6 +210,8 @@ window.Vault = (function () {
       ${item('loras', 'LoRA', 'layers', state.loras.length || '')}
       ${item('workflows', '工作流', 'flow', state.workflows.length || '')}
       <div class="nav-label">管理</div>
+      ${item('local', '本地配置', 'cpu', null)}
+      ${item('ai', 'AI 智能体', 'spark', null)}
       ${item('categories', '分类', 'folder', state.categories.length || '')}
       ${item('settings', '设置', 'edit', null)}
     `;

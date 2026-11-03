@@ -252,7 +252,7 @@ window.Canvas = (function () {
       <button class="btn" data-cv="import-wf">${V.icon('flow', 14)} 导入工作流</button>
       <button class="btn" data-cv="pack">${V.icon('layers', 14)} 简易节点包</button>
       <button class="btn" data-cv="outputs">${V.icon('img', 14)} 引擎出图</button>
-      <button class="btn" data-cv="adv">${V.icon('cpu', 14)} 高级选项</button>
+      <button class="btn" data-cv="adv">${V.icon('cpu', 14)} 本地配置</button>
       <button class="btn" data-cv="list">${V.icon('layers', 14)} 画布</button>`,
     render: async (c) => {
       host = c;
@@ -281,6 +281,10 @@ window.Canvas = (function () {
         </div>
         <div class="cv-hud">
           <button class="cv-tool cv-exit" data-cv="exit" title="退出画布（Esc）">${V.icon('back', 15)}<span>图库</span></button>
+          <div class="cv-hud-sep"></div>
+          <button class="cv-tool cv-add" data-cv="add-prompt" title="放一个提示词节点（正向）">${V.icon('edit', 15)}<span>提示词</span></button>
+          <button class="cv-tool cv-add" data-cv="add-ref" title="放参考图：我的图库 / 参考图库 / 本地文件">${V.icon('img', 15)}<span>参考图</span></button>
+          <button class="cv-tool cv-add" data-cv="add-gen" title="放一个输出节点（自动接上提示词）">${V.icon('spark', 15)}<span>出图</span></button>
           <div class="cv-hud-sep"></div>
           <button class="cv-tool" data-cv="undo" title="撤销 (⌘Z)">${V.icon('undo', 15)}</button>
           <button class="cv-tool" data-cv="redo" title="重做 (⇧⌘Z)">${V.icon('redo', 15)}</button>
@@ -319,9 +323,7 @@ window.Canvas = (function () {
     if (!Array.isArray(cv.nodes)) cv.nodes = [];
     if (!Array.isArray(cv.edges)) cv.edges = [];
     if (!cv.view || typeof cv.view.x !== 'number') cv.view = { x: 80, y: 60, k: 1 };
-    world.style.transform = `translate(${cv.view.x}px, ${cv.view.y}px) scale(${cv.view.k})`;
-    const zoomEl = host.querySelector('#cv-zoom');
-    if (zoomEl) zoomEl.textContent = Math.round(cv.view.k * 100) + '%';
+    applyTransform();
 
     world.querySelectorAll('.cv-node').forEach(n => n.remove());
     cv.nodes.filter(visibleNode).forEach(n => world.appendChild(makeNodeEl(n)));
@@ -1353,10 +1355,26 @@ window.Canvas = (function () {
     }
   }
 
+  /**
+   * 应用视口变换。
+   *
+   * 这里用 CSS zoom 而不是 transform: scale —— 这是画布清晰度的关键。
+   * transform 缩放会把整层先按当前倍率栅格化成一张位图再拉伸，放大到 200% 以上时
+   * 文字边缘会出现明显的灰晕（看起来「发虚」）；zoom 是真实的布局缩放，
+   * 浏览器按缩放后的字号重新排版和渲染，放多大都锐利。
+   *
+   * 一个必须抵消的细节：zoom 同样会放大元素自身的 left / top 偏移，
+   * 所以写入时要除以当前倍率，读回来才是「屏幕偏移」。
+   */
   function applyTransform() {
-    world.style.transform = `translate(${cv.view.x}px, ${cv.view.y}px) scale(${cv.view.k})`;
+    if (!world) return;
+    const k = cv.view.k || 1;
+    world.style.transform = 'none';
+    world.style.left = (cv.view.x / k) + 'px';
+    world.style.top = (cv.view.y / k) + 'px';
+    world.style.zoom = k;
     const z = host?.querySelector('#cv-zoom');
-    if (z) z.textContent = Math.round(cv.view.k * 100) + '%';
+    if (z) z.textContent = Math.round(k * 100) + '%';
     drawMinimap();
   }
 
@@ -1542,7 +1560,7 @@ window.Canvas = (function () {
     const base = { id: U.uid('n'), type, x: pos.x, y: pos.y };
     const defaults = {
       prompt: { w: 320, data: { text: '', role: '正向' } },
-      image: { w: 260, data: { src: '', label: '图片' } },
+      image: { w: 200, data: { src: '', label: '图片' } },
       ref: { w: 220, data: { src: '', label: '参考图' } },
       gen: { w: 356, data: { wfName: '', model: '', status: 'idle', statusText: '' } },
       simple: { w: 330, data: { wfName: '', text: '', neg: '', src: '', imageSlots: 0, status: 'idle', statusText: '' } },
@@ -1652,6 +1670,265 @@ window.Canvas = (function () {
             paint();
           };
         });
+        paint();
+      }
+    });
+  }
+
+  /* ============================================================
+     底栏快捷添加：提示词 / 参考图 / 出图
+     ============================================================ */
+  function hasEdgeFrom(id) { return cv.edges.some(e => e.from === id); }
+
+  /** 新节点自动接上已有节点 —— 不自动连的话，小白加完节点还得自己拉线 */
+  function autoWire(n) {
+    let wired = 0;
+    if (n.type === 'gen' || n.type === 'simple') {
+      cv.nodes.forEach(x => {
+        if (x.id === n.id || x.type !== 'prompt' || hasEdgeFrom(x.id)) return;
+        cv.edges.push({ from: x.id, to: n.id });
+        wired++;
+      });
+    } else if (n.type === 'image' || n.type === 'ref') {
+      const gen = cv.nodes.find(x => x.id !== n.id && (x.type === 'gen' || x.type === 'simple'));
+      if (gen) { cv.edges.push({ from: n.id, to: gen.id }); wired++; }
+    }
+    return wired;
+  }
+
+  function quickAdd(kind) {
+    if (kind === 'ref') { addRefFlow(); return; }
+
+    if (kind === 'prompt') {
+      const hasPos = cv.nodes.some(x => x.type === 'prompt' && x.data.role !== '负向');
+      const hasNeg = cv.nodes.some(x => x.type === 'prompt' && x.data.role === '负向');
+      // 缺哪个补哪个：一个都没有先给正向，已经有正向没负向就给负向
+      const role = (hasPos && !hasNeg) ? '负向' : '正向';
+      // 提示词节点有 320 宽，centerSpawn 那点错开量压不住，会盖住上一个
+      const prev = cv.nodes.filter(x => x.type === 'prompt').slice(-1)[0];
+      const pos = prev
+        ? { x: prev.x, y: prev.y + 210 }
+        : centerSpawn(320, 200);
+      const n = addNode('prompt', { pos: pos, data: { role: role, text: '' } });
+      autoWire(n);
+      renderEdges();
+      V.toast(role === '负向'
+        ? '加了负向提示词节点 —— 不想要的东西写这里'
+        : '加了正向提示词节点 —— 想要的画面写这里', 'ok');
+      return;
+    }
+
+    if (kind === 'gen') {
+      const wfs = V.state.workflows || [];
+      const wf = wfs.find(w => w.builtin) || wfs[0];
+      // 排在已有提示词节点的右边（提示词是输入，输出节点在它下游）；没有提示词就放视口中间
+      const prevGen = cv.nodes.filter(x => x.type === 'gen' || x.type === 'simple').slice(-1)[0];
+      const firstPrompt = cv.nodes.find(x => x.type === 'prompt');
+      const pos = prevGen
+        ? { x: prevGen.x + (prevGen.w || 356) + 70, y: prevGen.y }
+        : firstPrompt
+          ? { x: firstPrompt.x + (firstPrompt.w || 320) + 90, y: firstPrompt.y }
+          : centerSpawn(356, 300);
+      const n = addNode('gen', {
+        pos: pos,
+        data: {
+          workflowId: wf ? wf.id : '', wfName: wf ? wf.name : '',
+          status: 'idle', statusText: ''
+        }
+      });
+      const wired = autoWire(n);
+      renderEdges();
+      if (!wf) V.toast('还没有工作流 —— 点顶栏「导入工作流」，或去「工作流」页加一套', 'err');
+      else if (wired) V.toast('加了输出节点，已自动接上 ' + wired + ' 个提示词', 'ok');
+      else V.toast('加了输出节点 · ' + wf.name, 'ok');
+    }
+  }
+
+  /* ---------------- 加参考图：我的图库 / 参考图库 / 本地文件 ---------------- */
+  const REF_LIBS = [
+    { key: 'vault', label: '我的图库' },
+    { key: 'outfits', label: '服饰参考' },
+    { key: 'faces', label: '人脸参考' },
+    { key: 'poses', label: '姿势参考' },
+    { key: 'file', label: '本地文件' }
+  ];
+  const REF_PICK_LIMIT = 60;   // 一次最多铺这么多，再多画布会挤成一团
+
+  function addRefFlow() {
+    const picked = new Map();   // id → {src, blobId, label}，用 Map 保持选中顺序
+    let lib = 'vault';
+    let kw = '';
+
+    V.openModal({
+      title: '加参考图',
+      sub: '一次可以选多张 —— 选完自动铺到画布，并接到「输出」节点上',
+      wide: true,
+      body: `
+        <div class="chips" style="margin-bottom:10px" id="ref-tabs">
+          ${REF_LIBS.map((l, i) => `<button class="chip ${i === 0 ? 'active' : ''}" data-lib="${l.key}">${l.label}</button>`).join('')}
+        </div>
+        <div class="refpick-bar">
+          <input type="search" id="ref-q" placeholder="搜索编号或关键词，比如 SPR-00 / 和服 / 长发">
+          <span class="hint" id="ref-count">已选 0 张</span>
+        </div>
+        <div id="ref-grid" class="refpick-grid"></div>`,
+      footer: `<button class="btn" data-close>取消</button>
+               <button class="btn primary" id="ref-ok">放到画布</button>`,
+      onMount: (box, close) => {
+        const grid = box.querySelector('#ref-grid');
+        const countEl = box.querySelector('#ref-count');
+
+        const syncCount = () => {
+          countEl.textContent = picked.size ? `已选 ${picked.size} 张` : '已选 0 张';
+          countEl.classList.toggle('on', picked.size > 0);
+        };
+
+        const paint = () => {
+          if (lib === 'file') {
+            grid.innerHTML = `<div class="empty" style="padding:36px 0;grid-column:1/-1">
+              ${V.icon('upload', 32)}<b>从电脑里选图</b>
+              <span class="hint">选完直接放到画布，不占图库空间</span>
+              <button class="btn primary" id="ref-file-btn">选择文件</button></div>`;
+            grid.querySelector('#ref-file-btn').onclick = () => {
+              const inp = document.createElement('input');
+              inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true;
+              inp.onchange = async () => {
+                const files = [...inp.files].slice(0, 9);
+                if (!files.length) return;
+                close();
+                V.toast(`正在放 ${files.length} 张图…`);
+                const gen0 = cv.nodes.find(x => x.type === 'gen' || x.type === 'simple');
+                const origin = gen0
+                  ? { x: gen0.x + (gen0.w || 356) + 70, y: gen0.y }
+                  : centerSpawn(200, 260);
+                let i = 0;
+                for (const f of files) {
+                  let src = '';
+                  try {
+                    const blob = await Parse.makeThumb(f, 1200, 0.9);
+                    const bid = U.uid('bl');
+                    await DB.putBlob(bid, blob, { kind: 'canvas' });
+                    src = await urlForBlob(bid);
+                  } catch { continue; }
+                  const col = Math.floor(i / 4), row = i % 4;
+                  const n = addNode('image', {
+                    pos: { x: Math.round(origin.x + col * 236), y: Math.round(origin.y + row * 330) },
+                    data: { src: src, label: f.name }
+                  });
+                  autoWire(n);
+                  i++;
+                }
+                renderEdges(); queueSave();
+                V.toast(i ? `已放 ${i} 张参考图` : '一张都没读到', i ? 'ok' : 'err');
+              };
+              inp.click();
+            };
+            return;
+          }
+
+          let items = [];
+          if (lib === 'vault') {
+            items = V.state.images.map(i => ({
+              id: i.id, src: '', blobId: i.blobId, thumbId: i.thumbId,
+              label: i.id, kw: [i.note, (i.tags || []).join(' ')].filter(Boolean).join(' ')
+            }));
+          } else {
+            items = (window.REF_DATA?.[lib]?.items || []).map(it => ({
+              id: it.id, src: it.thumb, label: it.id.slice(0, 10),
+              kw: [it.kw, it.cat, it.style, it.name].filter(Boolean).join(' ')
+            }));
+          }
+
+          if (kw) {
+            const q = kw.toLowerCase();
+            items = items.filter(i => (i.id + ' ' + (i.kw || '')).toLowerCase().includes(q));
+          }
+
+          if (!items.length) {
+            grid.innerHTML = `<div class="empty" style="padding:36px 0;grid-column:1/-1">
+              ${V.icon('img', 30)}<b>${lib === 'vault' ? '图库还是空的' : '没有匹配的图'}</b></div>`;
+            return;
+          }
+
+          const shown = items.slice(0, 150);   // 只渲染前面这些，剩下的靠搜索缩小
+          grid.innerHTML = shown.map(it => `
+            <div class="refpick ${picked.has(it.id) ? 'on' : ''}" data-id="${esc(it.id)}">
+              <img ${it.thumbId ? `data-blob="${esc(it.thumbId)}"` : `src="${esc(it.src)}"`} loading="lazy" alt="">
+              <i>${esc(it.label)}</i>
+            </div>`).join('');
+
+          if (lib === 'vault') {
+            grid.querySelectorAll('img[data-blob]').forEach(async img => {
+              const u = await V.blobURL(img.dataset.blob);
+              if (u) img.src = u;
+            });
+          }
+
+          grid.querySelectorAll('.refpick').forEach(el => {
+            el.onclick = () => {
+              const it = shown.find(x => x.id === el.dataset.id);
+              if (!it) return;
+              if (picked.has(it.id)) {
+                picked.delete(it.id);
+              } else {
+                if (picked.size >= REF_PICK_LIMIT) return V.toast(`一次最多 ${REF_PICK_LIMIT} 张`, 'err');
+                picked.set(it.id, it);
+              }
+              el.classList.toggle('on', picked.has(it.id));
+              syncCount();
+            };
+          });
+        };
+
+        box.querySelectorAll('[data-lib]').forEach(b => {
+          b.onclick = () => {
+            lib = b.dataset.lib;
+            kw = '';
+            const q = box.querySelector('#ref-q');
+            if (q) { q.value = ''; q.disabled = (lib === 'file'); }
+            box.querySelectorAll('[data-lib]').forEach(x => x.classList.toggle('active', x === b));
+            paint();
+          };
+        });
+
+        const q = box.querySelector('#ref-q');
+        if (q) q.oninput = U.debounce(() => { kw = q.value.trim(); paint(); }, 200);
+
+        box.querySelector('#ref-ok').onclick = () => {
+          if (!picked.size) return V.toast('还没选图', 'err');
+          close();
+          const list = [...picked.values()];
+          // 有输出节点就排到它右边（不挡住提示词），没有就在视口中心铺开
+          const gen = cv.nodes.find(x => x.type === 'gen' || x.type === 'simple');
+          const origin = gen
+            ? { x: gen.x + (gen.w || 356) + 70, y: gen.y }
+            : centerSpawn(200, 260);
+          let i = 0;
+          list.forEach(it => {
+            const col = Math.floor(i / 4), row = i % 4;
+            const n = addNode('image', {
+              pos: { x: Math.round(origin.x + col * 236), y: Math.round(origin.y + row * 330) },
+              data: { src: it.src || '', blobId: it.blobId || '', refId: it.id, label: it.label }
+            });
+            // 图库里的图要先取到可显示的地址
+            if (it.blobId) {
+              V.blobURL(it.blobId).then(u => {
+                if (!u) return;
+                const node = nodeById(n.id);
+                if (!node) return;
+                node.data.src = u;
+                refreshNode(node);
+              });
+            }
+            autoWire(n);
+            i++;
+          });
+          renderEdges();
+          queueSave();
+          V.toast(`放了 ${i} 张参考图，已接到输出节点`, 'ok');
+        };
+
+        syncCount();
         paint();
       }
     });
@@ -2701,99 +2978,6 @@ window.Canvas = (function () {
   }
 
   /* ============================================================
-     高级选项：模型 / LoRA 等文件路径
-     ============================================================ */
-  async function advancedModal() {
-    // 读当前引擎状态、已配路径，以及后端自动识别到的模型目录
-    let st = {}, dirs = [], scan = { found: {}, files: {}, roots: [] };
-    try { st = await Comfy.engineStatus(); } catch { st = {}; }
-    try { dirs = (await Comfy.listDir('~')).entries?.filter(e => e.dir)?.map(e => e.path) || []; } catch { }
-    try { scan = (await Comfy.scanModels()) || scan; } catch { }
-
-    const PATH_FIELDS = [
-      { key: 'checkpoints', label: '底模（checkpoints）', hint: '.safetensors / .ckpt 完整模型' },
-      { key: 'diffusion_models', label: '扩散模型（diffusion_models）', hint: 'Flux、Krea、Qwen 等分离式 UNET' },
-      { key: 'clip', label: 'CLIP（clip）', hint: '文本编码器' },
-      { key: 'text_encoders', label: '文本编码器（text_encoders）', hint: 'Flux 等新模型的 T5/CLIP' },
-      { key: 'vae', label: 'VAE', hint: '.safetensors' },
-      { key: 'loras', label: 'LoRA（loras）', hint: 'LoRA 文件所在目录' },
-    ];
-
-    const paths = st.paths || {};
-    const found = scan.found || {};
-    const counts = scan.files || {};
-    const partials = scan.partial || {};
-    const partialOf = (k) => (partials[k] ? `（另有 ${partials[k]} 个正在下载）` : '');
-    // 已手工配置的优先；没配过就用自动识别到的填进去
-    const valOf = (k) => paths[k] || found[k] || '';
-    // 自动挂载进配置的路径也标成「自动识别」：只要它和扫描结果一致
-    const isAuto = (k) => !!found[k] && (!paths[k] || paths[k] === found[k]);
-    const autoKeys = PATH_FIELDS.map(f => f.key).filter(isAuto);
-    const setKeys = PATH_FIELDS.map(f => f.key).filter(k => paths[k] && paths[k] !== found[k]);
-    const rootsTxt = (scan.roots || []).map(r => r.label).join(' · ');
-
-    const field = (f) => `
-      <div class="field">
-        <label>${esc(f.label)}${isAuto(f.key) ? '<em class="auto-tag">自动识别</em>' : ''}</label>
-        <input type="text" data-path="${f.key}" placeholder="绝对路径，如 /Users/xxx/models/checkpoints"
-               value="${esc(valOf(f.key))}">
-        <span class="hint">${isAuto(f.key)
-        ? `已找到 ${counts[f.key] || 0} 个模型${partialOf(f.key)} · ${esc(f.hint)}`
-        : esc(f.hint)}</span>
-      </div>`;
-
-    V.openModal({
-      title: '高级选项 · 模型路径',
-      sub: '把本地模型 / LoRA 目录指过来，Loom 写进引擎的 extra_model_paths.yaml，无需复制文件',
-      wide: true,
-      body: `
-        <div class="pk-sec">
-          ${autoKeys.length
-        ? `<div class="adv-auto">✓ 已自动识别 ${autoKeys.length} 类模型目录${rootsTxt ? `（扫描：${esc(rootsTxt)}）` : ''}，直接点「保存路径」即可生效</div>`
-        : setKeys.length
-          ? `<div class="adv-auto">已配置 ${setKeys.length} 类模型目录，引擎启动时会自动挂载。想重新识别：把对应输入框清空再保存。</div>`
-          : `<div class="adv-auto none">没自动找到模型目录。把模型放到 <code>${esc(((scan.comfy_dir || 'ComfyUI').replace(/\/ComfyUI$/, '')) + '/models')}</code> 下（checkpoints / loras / vae / text_encoders），再打开这里就会自动认出来。</div>`}
-          <div class="form-grid">${PATH_FIELDS.map(field).join('')}</div>
-          ${(!autoKeys.length && dirs.length) ? `<div class="hint" style="margin-top:10px">家目录下的文件夹：${dirs.map(d => `<code>${esc(d)}</code>`).join(' ')}</div>` : ''}
-        </div>
-        <div class="pk-sec">
-          <h3>引擎状态</h3>
-          <p class="sub" id="adv-stat">
-            ${st.running
-        ? `<span style="color:var(--ok)">✓ 引擎运行中</span>（端口 ${esc(String(st.port || 8188))}）`
-        : `<span style="color:var(--text-3)">引擎未运行</span> —— 点「生成」时会自动拉起`}
-          </p>
-          ${st.log_tail ? `<details><summary>最近启动日志</summary><pre style="white-space:pre-wrap;font-size:11px;color:var(--text-3)">${esc(st.log_tail)}</pre></details>` : ''}
-        </div>`,
-      footer: `<button class="btn" data-close>取消</button>
-               <button class="btn primary" id="adv-save">保存路径</button>`,
-      onMount: (box, close) => {
-        box.querySelector('#adv-save').onclick = async () => {
-          const mapping = {};
-          box.querySelectorAll('[data-path]').forEach(inp => {
-            const v = inp.value.trim();
-            if (v) mapping[inp.dataset.path] = v;
-          });
-          try {
-            await Comfy.setEnginePaths(mapping);
-            close();
-            if (st.running) {
-              V.toast('已保存，正在重启引擎让路径生效…', 'ok');
-              Comfy.restartEngine()
-                .then(() => V.toast('引擎已重启，模型路径生效', 'ok'))
-                .catch((e) => V.toast('引擎重启失败：' + e.message, 'err'));
-            } else {
-              V.toast('路径已保存，下次启动引擎时生效', 'ok');
-            }
-          } catch (e) {
-            V.toast('保存失败：' + e.message, 'err');
-          }
-        };
-      }
-    });
-  }
-
-  /* ============================================================
      简易节点包
      ============================================================ */
   async function packRead() {
@@ -2887,7 +3071,10 @@ window.Canvas = (function () {
     if (a === 'import-wf') importWorkflow();
     if (a === 'list') canvasListModal();
     if (a === 'pack') simplePackModal();
-    if (a === 'adv') advancedModal();
+    if (a === 'adv') V.go('local');      // 模型路径合并进「管理 → 本地配置」了，不再单独弹窗
+    if (a === 'add-prompt') quickAdd('prompt');
+    if (a === 'add-ref') quickAdd('ref');
+    if (a === 'add-gen') quickAdd('gen');
     if (a === 'outputs') outputsModal();
   });
 
