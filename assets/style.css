@@ -2139,6 +2139,10 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
 .cv-hint { right: 232px; max-width: calc(100% - 260px); text-align: right; }
 @media (max-width: 760px) { .cv-hint { right: 18px; max-width: calc(100% - 36px); } }
 
+/* 画布底部那条快捷键提示和 toast 都在底部，同时出现会叠在一起。
+   画布存在时把 toast 抬起来（:has 不支持时退化成原来的位置，不影响功能）。 */
+body:has(.cv-host) #toasts { bottom: 76px; }
+
 /* 张数行：窄节点时换行，别把固定种子挤出去 */
 .cv-batch { flex-wrap: wrap; row-gap: 4px; }
 .cv-seedfix { flex: 0 0 auto; }

@@ -521,3 +521,34 @@ describe('size 合体槽位', () => {
     assert.equal(s.numbers.width.via, undefined);
   });
 });
+
+/* ============================================================
+   imageSlots —— 画布靠它判断「能不能接参考图」
+   内置的 KREA2 是纯文生图，imageSlots 必须是 0，
+   否则 autoWire() 会给它连一根传不进去的线。
+   ============================================================ */
+describe('imageSlots', () => {
+  test('没有 ref 图位时是 0（纯文生图）', () => {
+    const api = {
+      '1': { inputs: { text: 'a' }, _meta: { title: 'prompt' } },
+      '2': { inputs: { filename_prefix: 'x' }, _meta: { title: 'out' } }
+    };
+    const s = comfy.parseSlots(api);
+    assert.equal(s.imageSlots, 0);
+    assert.ok(s.capabilities.includes('t2i'));
+    assert.ok(!s.capabilities.includes('i2i'));
+  });
+
+  test('有一个 ref_image_01 就是 1 个图位', () => {
+    const api = {
+      '1': { inputs: { image: '' }, _meta: { title: 'ref_image_01' } },
+      '2': { inputs: { filename_prefix: 'x' }, _meta: { title: 'out' } }
+    };
+    assert.equal(comfy.parseSlots(api).imageSlots, 1);
+  });
+
+  test('完全没标注的工作流也给 0（不能让上层误以为能接图）', () => {
+    const api = { '1': { class_type: 'KSampler', inputs: { seed: 1 } } };
+    assert.equal(comfy.parseSlots(api).imageSlots, 0);
+  });
+});

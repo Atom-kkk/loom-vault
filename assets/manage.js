@@ -895,7 +895,9 @@
     // 手工配过、且和自动识别结果不一样的：这些是用户自己指定的目录，不能被当成「没找到」
     const setKeys = keys.filter(k => configured[k] && configured[k] !== found[k]);
     const rootsTxt = (scan.roots || []).map(r => r.label).join(' · ');
-    const ownModels = ((scan.comfy_dir || 'ComfyUI').replace(/\/ComfyUI\/?$/, '')) + '/models';
+    // 提示里要指向 ComfyUI 自己的 models，不能把结尾的 /ComfyUI 剥掉 ——
+    // 剥掉之后算出来是「上一级/models」，小白照着放会放到扫描根之外
+    const ownModels = (scan.comfy_dir || 'ComfyUI').replace(/[\\/]+$/, '') + '/models';
 
     const field = f => `
       <div class="field">

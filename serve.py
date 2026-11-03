@@ -693,12 +693,22 @@ class Engine:
         cache["data"], cache["t"] = data, now
         return data
 
+    # ComfyUI 往终端写日志时带颜色转义（\x1b[32m … \x1b[0m）。日志被截取到网页上
+    # 显示时，这些控制字符不会被解释，用户看到的是「[32m[INFO][0m」这种乱码。
+    # 在源头剥掉，启动失败原因（也是从日志里取的）才不会带着乱码进弹窗。
+    _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07?")
+
+    @classmethod
+    def _strip_ansi(cls, text):
+        return cls._ANSI_RE.sub("", text or "")
+
     def _log_tail(self, n=40):
         p = os.path.join(ROOT, ".engine.log")
         try:
             with open(p, "r", encoding="utf-8", errors="replace") as f:
                 lines = f.readlines()
-            return "".join(lines[-n:])
+            # \r 也不留：进度条那种行会回到行首覆盖，直接显示会挤成一条
+            return self._strip_ansi("".join(lines[-n:])).replace("\r", "")
         except OSError:
             return ""
 
@@ -950,7 +960,9 @@ class Installer:
 
     # ---------- 日志 / 步骤 ----------
     def _emit(self, line):
-        line = line.rstrip()
+        # pip / git 的输出会带颜色转义，前端是当纯文本塞进 <pre> 的，
+        # 不剥掉用户就会看到 [0m[31m 这类乱码
+        line = Engine._strip_ansi(line).rstrip()
         if not line:
             return
         self._task_last = time.time()

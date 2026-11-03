@@ -1366,13 +1366,28 @@ window.Canvas = (function () {
    * 一个必须抵消的细节：zoom 同样会放大元素自身的 left / top 偏移，
    * 所以写入时要除以当前倍率，读回来才是「屏幕偏移」。
    */
+  /** 浏览器是否支持 CSS zoom（Firefox 126+ / Safari 全系 / Chromium 全系） */
+  const ZOOM_OK = (() => {
+    try { return !!(window.CSS && CSS.supports && CSS.supports('zoom', '2')); }
+    catch { return false; }
+  })();
+
   function applyTransform() {
     if (!world) return;
     const k = cv.view.k || 1;
-    world.style.transform = 'none';
-    world.style.left = (cv.view.x / k) + 'px';
-    world.style.top = (cv.view.y / k) + 'px';
-    world.style.zoom = k;
+    if (ZOOM_OK) {
+      world.style.transform = 'none';
+      world.style.left = (cv.view.x / k) + 'px';
+      world.style.top = (cv.view.y / k) + 'px';
+      world.style.zoom = k;
+    } else {
+      // 老浏览器没有 zoom：退回 transform。两者在屏幕空间里的公式一致
+      // （x + 世界坐标 × k），所以拖拽 / 框选 / 小地图都不用改。
+      world.style.zoom = '';
+      world.style.left = '0px';
+      world.style.top = '0px';
+      world.style.transform = `translate(${cv.view.x}px, ${cv.view.y}px) scale(${k})`;
+    }
     const z = host?.querySelector('#cv-zoom');
     if (z) z.textContent = Math.round(k * 100) + '%';
     drawMinimap();
@@ -1681,6 +1696,28 @@ window.Canvas = (function () {
   function hasEdgeFrom(id) { return cv.edges.some(e => e.from === id); }
 
   /** 新节点自动接上已有节点 —— 不自动连的话，小白加完节点还得自己拉线 */
+  /** 这套工作流吃不吃参考图（有没有 ref_image_xx 图位） */
+  function canTakeRef(gen) {
+    if (!gen || !gen.data.workflowId) return false;
+    const s = slotsOfNode(gen);
+    return !!(s && s.imageSlots > 0);
+  }
+
+  /**
+   * 参考图接不上输出节点时，告诉用户到底为什么。
+   * 之前是照连不误，点生成才报「这个工作流没有 ref_image_xx 槽位」——
+   * 线都画出来了却说没接上，等于骗人。
+   */
+  function refHint(gen) {
+    if (!gen) return '画布上还没有「输出」节点：图先放着，接上输出节点才能用';
+    if (!gen.data.workflowId) return '输出节点还没绑工作流：图先放着，绑好工作流再看它吃不吃参考图';
+    if (!canTakeRef(gen)) {
+      const nm = wfLabel(gen);
+      return `「${nm}」没有参考图槽位（ref_image_xx），图已放上画布但没接到输出节点`;
+    }
+    return '';
+  }
+
   function autoWire(n) {
     let wired = 0;
     if (n.type === 'gen' || n.type === 'simple') {
@@ -1691,7 +1728,8 @@ window.Canvas = (function () {
       });
     } else if (n.type === 'image' || n.type === 'ref') {
       const gen = cv.nodes.find(x => x.id !== n.id && (x.type === 'gen' || x.type === 'simple'));
-      if (gen) { cv.edges.push({ from: n.id, to: gen.id }); wired++; }
+      // 工作流没有图位时不要连线：连了也传不进去，还会让人以为已经接上了
+      if (gen && canTakeRef(gen)) { cv.edges.push({ from: n.id, to: gen.id }); wired++; }
     }
     return wired;
   }
@@ -1819,7 +1857,9 @@ window.Canvas = (function () {
                   i++;
                 }
                 renderEdges(); queueSave();
-                V.toast(i ? `已放 ${i} 张参考图` : '一张都没读到', i ? 'ok' : 'err');
+                if (!i) { V.toast('一张都没读到', 'err'); return; }
+                const hint = refHint(cv.nodes.find(x => x.type === 'gen' || x.type === 'simple'));
+                V.toast(hint || `已放 ${i} 张参考图，已接到输出节点`, hint ? 'err' : 'ok');
               };
               inp.click();
             };
@@ -1925,7 +1965,9 @@ window.Canvas = (function () {
           });
           renderEdges();
           queueSave();
-          V.toast(`放了 ${i} 张参考图，已接到输出节点`, 'ok');
+          const hint = refHint(cv.nodes.find(x => x.type === 'gen' || x.type === 'simple'));
+          if (hint) V.toast(hint, 'err');
+          else V.toast(`放了 ${i} 张参考图，已接到输出节点`, 'ok');
         };
 
         syncCount();

@@ -14,6 +14,8 @@
 import os
 import sys
 import tempfile
+import contextlib
+import io
 import unittest
 from unittest import mock
 
@@ -666,3 +668,68 @@ class TestProtocolVersion(unittest.TestCase):
     def test_http_11_for_connection_reuse(self):
         """HTTP/1.0 每个请求一条连接，几百张缩略图会把本机端口用光"""
         self.assertEqual(serve.Handler.protocol_version, 'HTTP/1.1')
+
+
+# ============================================================
+# 日志里的 ANSI 颜色转义
+# ComfyUI 往终端写日志带 \x1b[32m 这类控制码，原样塞进网页
+# 用户看到的是「[32m[INFO][0m」乱码；启动失败的原因也是从日志里截的，
+# 乱码会一路跑到弹窗里。
+# ============================================================
+class TestStripAnsi(unittest.TestCase):
+
+    def test_strips_color_codes(self):
+        raw = '\x1b[32m[INFO]\x1b[0m Starting server'
+        self.assertEqual(serve.Engine._strip_ansi(raw), '[INFO] Starting server')
+
+    def test_strips_bold_and_reset(self):
+        self.assertEqual(serve.Engine._strip_ansi('\x1b[1m\x1b[33mWARN\x1b[0m x'), 'WARN x')
+
+    def test_strips_cursor_and_clear_sequences(self):
+        # \x1b[2K 清行、\x1b[1A 上移一行：进度条常用
+        self.assertEqual(serve.Engine._strip_ansi('\x1b[2K\x1b[1Aok'), 'ok')
+
+    def test_keeps_plain_text_and_brackets(self):
+        s = '[INFO] Total VRAM 16384 MB [0/1]'
+        self.assertEqual(serve.Engine._strip_ansi(s), s)
+
+    def test_none_and_empty_are_safe(self):
+        self.assertEqual(serve.Engine._strip_ansi(None), '')
+        self.assertEqual(serve.Engine._strip_ansi(''), '')
+
+    def test_regex_matches_real_engine_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            orig = serve.ROOT
+            serve.ROOT = tmp
+            try:
+                with open(os.path.join(tmp, '.engine.log'), 'w', encoding='utf-8') as f:
+                    f.write('\x1b[32m[INFO]\x1b[0m Found comfy_kitchen backend\r\n')
+                    f.write('\x1b[1m\x1b[33m[WARNING]\x1b[0m AIMDO\n')
+                e = serve.Engine()
+                out = e._log_tail(10)
+                self.assertNotIn('\x1b', out, out)
+                self.assertNotIn('\r', out, out)
+                self.assertIn('[INFO]', out)
+                self.assertIn('[WARNING]', out)
+            finally:
+                serve.ROOT = orig
+
+    def test_log_tail_missing_file_is_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            orig = serve.ROOT
+            serve.ROOT = tmp
+            try:
+                self.assertEqual(serve.Engine()._log_tail(5), '')
+            finally:
+                serve.ROOT = orig
+
+
+class TestInstallerLogClean(unittest.TestCase):
+
+    def test_emit_strips_ansi_before_buffering(self):
+        inst = serve.INSTALLER
+        inst._s['log'] = []
+        # _emit 会顺手 print 一份给终端，测试里没必要看
+        with contextlib.redirect_stdout(io.StringIO()):
+            inst._emit('\x1b[31mERROR: no wheel\x1b[0m')
+        self.assertEqual(inst._s['log'][-1], 'ERROR: no wheel')
