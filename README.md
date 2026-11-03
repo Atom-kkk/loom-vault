@@ -123,6 +123,42 @@ Loom 启动引擎时默认带 `--enable-cors-header`，所以浏览器能跨域�
 2. **安全**：ComfyUI 开着 `Access-Control-Allow-Origin: *` 且没有鉴权，意味着**任何网页都能往你的队列里塞任务**。
    不想承担这个风险就别用在线版出图，或者在 ComfyUI 前面加一层带鉴权的反代。
 
+## 桌面版（macOS / Windows）
+
+不想开终端、不想记端口，就用桌面版：双击图标，窗口里就是完整界面。
+
+**获取方式**
+
+- 打开仓库的 **Actions → Build desktop apps → 最近一次运行**，在页面底部 Artifacts 里下载
+  `Loom-macOS`（dmg / zip，arm64 与 x64 各一份）或 `Loom-Windows`（NSIS 安装包 + 免安装 exe）
+- 想自己打：`cd desktop && npm install && npm run dist:mac`（或 `dist:win`）
+
+**系统要求**
+
+| | 要求 |
+|---|---|
+| 系统 | macOS 11+ / Windows 10+ |
+| Python | **3.10 或更新**（桌面版靠它跑 `serve.py`；macOS 自带的 3.9 不够） |
+| 磁盘 | 约 350 MB（含 68 MB 参考图缩略图） |
+
+没装 Python 时，应用不会白屏，会开一个说明页并给出下载地址。
+
+**首次打开会被系统拦一下**（因为没买代码签名证书）：
+
+- macOS：右键点图标 →「打开」→ 再点「打开」；之后就不拦了
+- Windows：SmartScreen 提示「已保护你的电脑」→ 点「更多信息」→「仍要运行」
+
+**它做了什么**
+
+1. 找空闲端口
+2. 探测本机 Python（`py -3` / `python` / `python3`，多个候选）
+3. 用 `<Python> serve.py <端口> --no-open` 起本地服务
+4. 端口通了才 `loadURL`，没通就显示日志片段而不是空白窗口
+5. 退出时把 serve.py 连同它拉起的 ComfyUI 一起收掉；被强杀留下的孤儿进程会在下次启动时按 pidfile 清理
+
+网页资源会复制到用户目录（`~/Library/Application Support/Loom/web` 或 `%APPDATA%\Loom\web`），
+因为 macOS 的 `.app` 包内是只读的，而 `serve.py` 要往自己目录写 `.engine.json`。
+
 ## 核心特性
 
 - 🖼️ **图库**：拖入即存，自动解析 A1111 / ComfyUI 内嵌的提示词、种子、步数、LoRA

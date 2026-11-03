@@ -4,6 +4,24 @@
 
 ## [未发布]
 
+### 新增（桌面版 macOS / Windows）
+
+Electron 壳，双击即用，不再需要开终端、记端口。
+
+- `desktop/main.js`：找空闲端口 → 探测 Python（`py -3` / `python` / `python3`，要求 3.10+）
+  → `serve.py <端口> --no-open` → 端口通了才 loadURL
+- 网页资源复制到用户目录（`.app` 包内只读，而 serve.py 要写 `.engine.json`）；
+  升级时按版本号重同步，但保留用户已有的 `.engine.json`
+- 退出时连带收掉 serve.py 拉起的 ComfyUI；被强杀留下的孤儿服务按 pidfile 在下次启动时清理
+  （杀之前先用 `ps` / `Get-CimInstance` 确认命令行里是 serve.py，防 pid 复用误杀）
+- 没装 Python / 起不来时开说明页并给出下载地址与日志片段，不白屏
+- 菜单加了「打开数据目录」「在线体验」「项目主页」；站外链接交给系统浏览器
+- `.github/workflows/desktop.yml`：macOS 与 Windows 各一台构建机，产出 dmg / zip / exe 到 Artifacts
+- `desktop/build/icon.png` 由 `scripts/make_icons.py` 的同一套绘制逻辑渲染到 1024px
+
+实测（macOS arm64）：`npm start` 与打包后的 `Loom.app` 均能拉起服务并完整渲染
+（15 个导航项、参考库 1407/1499/1439、资源徽章正常）；arm64 / x64 各出一份 dmg，约 160 MB。
+
 ### 新增（在线体验 / 纯静态托管）
 
 前端本来就不依赖后端，但 `ensureEngine()` 硬要问 `serve.py`，

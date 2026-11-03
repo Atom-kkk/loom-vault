@@ -1,0 +1,89 @@
+{
+  "name": "loom-vault-desktop",
+  "productName": "Loom",
+  "version": "2.1.0",
+  "private": true,
+  "description": "Loom 织造所 · 本地 AI 出图工作台（桌面版）",
+  "author": "Atom-kkk",
+  "license": "MIT",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "dist": "electron-builder --mac --win"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.atomkkk.loom",
+    "productName": "Loom",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../",
+        "to": "web",
+        "filter": [
+          "index.html",
+          "serve.py",
+          "assets/**/*",
+          "reference/**/*",
+          "demo/**/*",
+          "favicon.ico",
+          "apple-touch-icon.png",
+          "apple-touch-icon-precomposed.png",
+          "LICENSE",
+          "README.md"
+        ]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.graphics-design",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64", "x64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["arm64", "x64"]
+        }
+      ],
+      "icon": "build/icon.png",
+      "darkModeSupport": true,
+      "extendInfo": {
+        "LSMinimumSystemVersion": "11.0"
+      }
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Loom 织造所"
+    },
+    "asar": true,
+    "compression": "normal"
+  }
+}

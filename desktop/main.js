@@ -1,0 +1,427 @@
+/* ============================================================
+   Loom 桌面版 · Electron 主进程
+   ------------------------------------------------------------
+   干的事很少，但每一件都必须稳：
+     1. 找一个空闲端口
+     2. 找到本机 Python（3.10+）
+     3. 用它跑 serve.py（serve.py 自带静态服务 + 引擎管理）
+     4. 等端口通了再 loadURL
+     5. 退出时把子进程连同它拉起的 ComfyUI 一起收掉
+
+   为什么不把网页直接打进窗口：serve.py 还要管「安装 ComfyUI / 启动引擎 /
+   扫描模型目录」，这些都得有本机进程。前端调的是同源的 /engine/*。
+   ============================================================ */
+
+'use strict';
+
+const { app, BrowserWindow, Menu, dialog, shell } = require('electron');
+const { spawn, spawnSync } = require('node:child_process');
+const path = require('node:path');
+const fs = require('node:fs');
+const net = require('node:net');
+const http = require('node:http');
+
+const IS_WIN = process.platform === 'win32';
+const MIN_PY = [3, 10];
+
+let win = null;
+let server = null;          // serve.py 子进程
+let serverPort = 0;
+let quitting = false;
+
+/* ------------------------------------------------------------
+   网页资源：开发时用仓库根目录，打包后先从 asar 外复制到用户目录
+   （serve.py 要往自己的目录写 .engine.json / .engine.log，
+     而 macOS 的 .app 包内是只读的，直接跑会在安装后报权限错）
+   ------------------------------------------------------------ */
+function webDir() {
+  if (!app.isPackaged) return path.join(__dirname, '..');
+  return path.join(app.getPath('userData'), 'web');
+}
+
+function copyDir(src, dst) {
+  fs.mkdirSync(dst, { recursive: true });
+  for (const ent of fs.readdirSync(src, { withFileTypes: true })) {
+    const s = path.join(src, ent.name);
+    const d = path.join(dst, ent.name);
+    if (ent.isDirectory()) copyDir(s, d);
+    else {
+      // 已经存在的 .engine.json 要留着：那是用户配置的引擎位置
+      if (ent.name === '.engine.json' && fs.existsSync(d)) continue;
+      fs.copyFileSync(s, d);
+    }
+  }
+}
+
+/** 首次启动 / 升级后把网页资源同步到用户目录。返回是否真的复制了。 */
+function prepareWeb() {
+  const dst = webDir();
+  if (!app.isPackaged) return dst;
+
+  const src = path.join(process.resourcesPath, 'web');
+  const stamp = path.join(dst, '.version');
+  const want = app.getVersion();
+  if (fs.existsSync(stamp) && fs.readFileSync(stamp, 'utf8').trim() === want) return dst;
+
+  copyDir(src, dst);
+  fs.writeFileSync(stamp, want);
+  return dst;
+}
+
+/* ------------------------------------------------------------
+   Python 探测
+   ------------------------------------------------------------ */
+const PY_CANDIDATES = IS_WIN
+  ? [['py', ['-3']], ['python', []], ['python3', []]]
+  : [['python3', []], ['/usr/bin/python3', []], ['/opt/homebrew/bin/python3', []], ['python', []]];
+
+function pythonVersion(cmd, args) {
+  try {
+    const r = spawnSync(cmd, [...args, '-c', 'import sys;print("%d.%d" % sys.version_info[:2])'], {
+      encoding: 'utf8', timeout: 8000, windowsHide: true
+    });
+    if (r.error || r.status !== 0) return null;
+    const v = String(r.stdout || '').trim();
+    return /^\d+\.\d+$/.test(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 返回 { cmd, args, version } 或 null */
+function findPython() {
+  for (const [cmd, args] of PY_CANDIDATES) {
+    const v = pythonVersion(cmd, args);
+    if (!v) continue;
+    const [maj, min] = v.split('.').map(Number);
+    const ok = maj > MIN_PY[0] || (maj === MIN_PY[0] && min >= MIN_PY[1]);
+    if (ok) return { cmd, args, version: v };
+  }
+  return null;
+}
+
+/* ------------------------------------------------------------
+   端口
+   ------------------------------------------------------------ */
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.unref();
+    srv.on('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const p = srv.address().port;
+      srv.close(() => resolve(p));
+    });
+  });
+}
+
+function waitReady(port, timeoutMs = 25000) {
+  const t0 = Date.now();
+  return new Promise((resolve, reject) => {
+    const tick = () => {
+      const req = http.get({ host: '127.0.0.1', port, path: '/', timeout: 1500 }, res => {
+        res.resume();
+        if (res.statusCode === 200) return resolve();
+        retry();
+      });
+      req.on('error', retry);
+      req.on('timeout', () => { req.destroy(); retry(); });
+    };
+    const retry = () => {
+      if (Date.now() - t0 > timeoutMs) return reject(new Error('本地服务启动超时'));
+      setTimeout(tick, 300);
+    };
+    tick();
+  });
+}
+
+/* ------------------------------------------------------------
+   崩溃残留：上次被强杀时 serve.py 会变成孤儿一直占着端口。
+   记一个 pidfile，下次启动先把旧的收掉。
+   ------------------------------------------------------------ */
+function pidFile() {
+  return path.join(app.getPath('userData'), 'server.json');
+}
+
+function alive(pid) {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+/** 这个 pid 到底是不是我们的 serve.py（防 pid 被系统复用后误杀别人） */
+function isOurServer(pid) {
+  try {
+    if (IS_WIN) {
+      const r = spawnSync('powershell', ['-NoProfile', '-Command',
+        `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`],
+        { encoding: 'utf8', timeout: 6000, windowsHide: true });
+      return /serve\.py/i.test(r.stdout || '');
+    }
+    const r = spawnSync('ps', ['-p', String(pid), '-o', 'command='],
+      { encoding: 'utf8', timeout: 4000 });
+    return /serve\.py/.test(r.stdout || '');
+  } catch {
+    return false;
+  }
+}
+
+function reapStaleServer() {
+  let rec;
+  try { rec = JSON.parse(fs.readFileSync(pidFile(), 'utf8')); } catch { return; }
+  const pid = rec && Number(rec.pid);
+  if (!pid || !alive(pid)) return;
+  if (!isOurServer(pid)) return;
+  try {
+    if (IS_WIN) spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true });
+    else process.kill(pid, 'SIGTERM');
+  } catch { /* 收不掉就算了 */ }
+}
+
+function rememberServer(pid) {
+  try { fs.writeFileSync(pidFile(), JSON.stringify({ pid, port: serverPort, at: Date.now() })); } catch { }
+}
+
+function forgetServer() {
+  try { fs.unlinkSync(pidFile()); } catch { }
+}
+
+/* ------------------------------------------------------------
+   启动 serve.py
+   ------------------------------------------------------------ */
+function startServer(dir) {
+  const py = findPython();
+  if (!py) return Promise.reject(Object.assign(new Error('NO_PYTHON'), { noPython: true }));
+
+  // LOOM_PORT 是给调试 / 内网固定端口用的；正常启动由系统分配
+  const want = Number(process.env.LOOM_PORT || 0);
+  return (want > 0 ? Promise.resolve(want) : freePort()).then(port => {
+    serverPort = port;
+    const args = [...py.args, 'serve.py', String(port), '--no-open'];
+    reapStaleServer();
+    server = spawn(py.cmd, args, {
+      cwd: dir,
+      env: { ...process.env, PYTHONUNBUFFERED: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+      detached: !IS_WIN            // 非 Windows 建独立进程组，退出时整组收掉
+    });
+
+    let log = '';
+    const keep = chunk => { log = (log + chunk).slice(-4000); };
+    server.stdout.on('data', keep);
+    server.stderr.on('data', keep);
+
+    const exited = new Promise((_, rej) => {
+      server.on('exit', code => {
+        if (!quitting) {
+          const err = new Error('本地服务意外退出（exit ' + code + '）\n' + log.slice(-1200));
+          err.log = log;
+          rej(err);
+        }
+      });
+    });
+
+    rememberServer(server.pid);
+
+    return Promise.race([waitReady(port).then(() => log), exited]).then(() => port);
+  });
+}
+
+function stopServer() {
+  if (!server || server.killed) return;
+  try {
+    if (IS_WIN) {
+      // Windows 上 kill 只杀 serve.py，它拉起的 ComfyUI 会留在后台
+      spawnSync('taskkill', ['/pid', String(server.pid), '/T', '/F'], { windowsHide: true });
+    } else {
+      process.kill(-server.pid, 'SIGTERM');
+    }
+  } catch { /* 已经退了 */ }
+  server = null;
+  forgetServer();
+}
+
+/* ------------------------------------------------------------
+   界面
+   ------------------------------------------------------------ */
+function errorPage(title, detail, extra = '') {
+  const html = `<!doctype html><html lang="zh-CN"><meta charset="utf-8">
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      margin: 0; min-height: 100vh; display: grid; place-items: center;
+      background: #f6f3ee; color: #1d1b19;
+      font: 14px/1.75 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    .box { max-width: 560px; padding: 34px 38px; }
+    h1 { font-size: 18px; margin: 0 0 10px; font-weight: 600; }
+    p  { margin: 0 0 12px; color: #4a4642; }
+    pre {
+      background: #fffdf9; border: 1px solid #e3ddd4; border-radius: 10px;
+      padding: 12px 14px; font-size: 11.5px; line-height: 1.6;
+      white-space: pre-wrap; word-break: break-all; max-height: 220px; overflow: auto;
+      color: #6b645c;
+    }
+    .dot { width: 34px; height: 34px; border-radius: 10px; background: #1d1b19;
+      display: grid; place-items: center; margin-bottom: 16px; }
+    .dot i { width: 13px; height: 13px; border: 1.8px solid #fff; border-radius: 3px; }
+    a { color: #a8655a; }
+  </style>
+  <div class="box">
+    <div class="dot"><i></i></div>
+    <h1>${title}</h1>
+    ${extra}
+  </div></html>`;
+  return 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
+}
+
+function createWindow(url) {
+  win = new BrowserWindow({
+    width: 1360,
+    height: 880,
+    minWidth: 960,
+    minHeight: 620,
+    backgroundColor: '#f6f3ee',
+    title: 'Loom 织造所',
+    show: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: false
+    }
+  });
+
+  win.once('ready-to-show', () => win.show());
+  win.loadURL(url);
+
+  // 站内的外链一律交给系统浏览器，别在窗口里跳走
+  win.webContents.setWindowOpenHandler(({ url: target }) => {
+    if (/^https?:\/\//.test(target)) shell.openExternal(target);
+    return { action: 'deny' };
+  });
+  win.webContents.on('will-navigate', (e, target) => {
+    if (!target.startsWith('http://127.0.0.1:')) {
+      e.preventDefault();
+      shell.openExternal(target);
+    }
+  });
+
+  win.on('closed', () => { win = null; });
+}
+
+function buildMenu() {
+  const isMac = process.platform === 'darwin';
+  const tpl = [
+    ...(isMac ? [{
+      label: app.name,
+      submenu: [
+        { role: 'about', label: '关于 Loom' },
+        { type: 'separator' },
+        { role: 'hide', label: '隐藏 Loom' },
+        { role: 'hideOthers', label: '隐藏其它' },
+        { type: 'separator' },
+        { role: 'quit', label: '退出 Loom' }
+      ]
+    }] : []),
+    {
+      label: '编辑',
+      submenu: [
+        { role: 'undo', label: '撤销' }, { role: 'redo', label: '重做' },
+        { type: 'separator' },
+        { role: 'cut', label: '剪切' }, { role: 'copy', label: '复制' },
+        { role: 'paste', label: '粘贴' }, { role: 'selectAll', label: '全选' }
+      ]
+    },
+    {
+      label: '视图',
+      submenu: [
+        { role: 'reload', label: '重新载入' },
+        { role: 'forceReload', label: '强制重新载入' },
+        { type: 'separator' },
+        { role: 'resetZoom', label: '实际大小' },
+        { role: 'zoomIn', label: '放大' },
+        { role: 'zoomOut', label: '缩小' },
+        { type: 'separator' },
+        { role: 'togglefullscreen', label: '全屏' },
+        { role: 'toggleDevTools', label: '开发者工具' }
+      ]
+    },
+    {
+      label: '帮助',
+      submenu: [
+        { label: '项目主页', click: () => shell.openExternal('https://github.com/Atom-kkk/loom-vault') },
+        { label: '在线体验', click: () => shell.openExternal('https://atom-kkk.github.io/loom-vault/') },
+        { label: '打开数据目录', click: () => shell.openPath(app.getPath('userData')) }
+      ]
+    }
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(tpl));
+}
+
+/* ------------------------------------------------------------
+   启动流程
+   ------------------------------------------------------------ */
+async function boot() {
+  let dir;
+  try {
+    dir = prepareWeb();
+  } catch (e) {
+    return createWindow(errorPage('资源没有解压成功',
+      '', `<p>${e.message}</p>`));
+  }
+
+  try {
+    const port = await startServer(dir);
+    createWindow('http://127.0.0.1:' + port + '/');
+  } catch (e) {
+    if (e.noPython) {
+      const dl = IS_WIN ? 'https://www.python.org/downloads/windows/' : 'https://www.python.org/downloads/macos/';
+      createWindow(errorPage('这台电脑上没找到 Python 3.10+',
+        '',
+        `<p>Loom 的引擎管理和文件扫描由一个小型本地服务负责，它需要 Python 3.10 或更新版本。
+          装一次就行，装完重新打开 Loom。</p>
+         <p>安装时${IS_WIN ? '务必勾选 <b>Add Python to PATH</b>，' : ''}装完可以关掉安装器。</p>
+         <p><a href="${dl}" target="_blank">${dl}</a></p>
+         <p style="color:#8a8279;font-size:12px">已经装了但还是报这个错？可能是版本太旧（macOS 自带的 3.9 就不够），
+         用 <code>python3 --version</code> 确认一下。</p>`));
+      shell.openExternal(dl);
+    } else {
+      createWindow(errorPage('本地服务没起来', '', `<p>${e.message.split('\n')[0]}</p>
+        <pre>${(e.log || e.message || '').slice(-1200)}</pre>
+        <p style="font-size:12px;color:#8a8279">可以试试：菜单「视图 → 重新载入」，或退出重开。
+        仍然不行就把上面这段贴到 GitHub issue 里。</p>`));
+    }
+  }
+}
+
+/* ------------------------------------------------------------
+   单实例 / 生命周期
+   ------------------------------------------------------------ */
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
+  });
+
+  app.whenReady().then(() => {
+    buildMenu();
+    boot();
+  });
+
+  app.on('window-all-closed', () => {
+    quitting = true;
+    stopServer();
+    app.quit();
+  });
+
+  app.on('before-quit', () => {
+    quitting = true;
+    stopServer();
+  });
+
+  // 崩溃 / 强退也要收掉子进程，否则 ComfyUI 会一直占着显存
+  process.on('exit', stopServer);
+  process.on('SIGINT', () => { quitting = true; stopServer(); app.quit(); });
+  process.on('SIGTERM', () => { quitting = true; stopServer(); app.quit(); });
+}
