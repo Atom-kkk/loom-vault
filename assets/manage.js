@@ -167,6 +167,33 @@
           <p class="hint" style="margin:0 0 9px">主模型、LoRA、VAE、CLIP、ControlNet…… 每个文件一行，填下载链接。导出时会生成完整的部署清单和下载脚本。</p>
           <div id="m-files">${(m.files || []).map(fileRow).join('')}</div>
           <button class="btn sm" id="m-add-file">${icon('plus', 13)} 添加文件</button>
+        </div>
+
+        <div class="section cloud-only">
+          <div class="section-title">云端接入<span></span></div>
+          <p class="hint" style="margin:0 0 9px">选一个预设自动填好接口和模型名；中转站选最后一项，填中转站地址（带 /v1）和它要求的模型名。Key 只存在本机浏览器里。</p>
+          <div class="chips" id="m-cloud-presets" style="margin-bottom:12px">
+            ${(Cloud.CLOUD_PRESETS).map(p => `<button type="button" class="chip" data-pk="${p.key}" title="${esc(p.note || '')}">${esc(p.name)}</button>`).join('')}
+          </div>
+          <div class="form-grid">
+            <div class="field full"><label>接口地址</label>
+              <input type="text" id="m-api-base" value="${esc(m.apiBase || '')}" placeholder="https://api.openai.com/v1（中转站填到 /v1）"></div>
+            <div class="field"><label>API Key</label>
+              <input type="password" id="m-api-key" value="${esc(m.apiKey || '')}" placeholder="在厂商控制台申请，只存本机"></div>
+            <div class="field"><label>模型名（API 参数）</label>
+              <input type="text" id="m-api-model" value="${esc(m.apiModel || '')}" placeholder="gpt-image-1 / cogview-4-250304 / 中转站要求的名字"></div>
+            <div class="field"><label>调用形态</label>
+              <select id="m-api-shape">
+                ${Object.entries(Cloud.SHAPE_LABEL).map(([k, label]) => `<option value="${k}" ${(m.shape || 'images') === k ? 'selected' : ''}>${esc(label)}</option>`).join('')}
+              </select>
+              <span class="hint">中转站不确定形态就先试 images，报「没有图片链接」再换 chat。</span></div>
+            <div class="field"><label>出图尺寸（可选）</label>
+              <input type="text" id="m-api-size" value="${esc(m.size || '')}" placeholder="1024x1024（万相用 1024*1024，留空走默认）"></div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:10px;align-items:center">
+            <button class="btn sm" id="m-api-test">测试连接</button>
+            <span class="hint" id="m-api-test-result" style="margin:0"></span>
+          </div>
         </div>`,
       footer: `${!isNew ? `<button class="btn danger" id="m-del">${icon('trash', 14)} 删除</button>` : ''}
                <div class="spacer"></div>
@@ -176,6 +203,7 @@
         let type = m.type || 'local';
         const syncType = () => {
           box.querySelectorAll('.local-only').forEach(e => e.style.display = type === 'local' ? '' : 'none');
+          box.querySelectorAll('.cloud-only').forEach(e => e.style.display = type === 'cloud' ? '' : 'none');
         };
         box.querySelectorAll('#m-type button').forEach(b => {
           b.onclick = () => {
@@ -186,12 +214,45 @@
         });
         syncType();
 
+        // 云端预设：点一下自动填接口 / 模型名 / 形态 / 服务商（新模型名称为空时连名字一起填）
+        box.querySelectorAll('#m-cloud-presets .chip').forEach(ch => {
+          ch.onclick = () => {
+            const p = Cloud.presetOf(ch.dataset.pk);
+            if (!p) return;
+            box.querySelectorAll('#m-cloud-presets .chip').forEach(x => x.classList.toggle('active', x === ch));
+            box.querySelector('#m-api-base').value = p.base || '';
+            box.querySelector('#m-api-model').value = p.model || '';
+            box.querySelector('#m-api-shape').value = p.shape || 'images';
+            box.querySelector('#m-platform').value = p.vendor || '';
+            if (isNew && !box.querySelector('#m-name').value.trim()) box.querySelector('#m-name').value = p.name;
+          };
+        });
+
+        // 测试连接（用表单里当前的值，不用已保存的）
+        box.querySelector('#m-api-test').onclick = async () => {
+          const out = box.querySelector('#m-api-test-result');
+          out.textContent = '测试中…';
+          try {
+            out.textContent = await Cloud.testConnection({
+              apiBase: box.querySelector('#m-api-base').value.trim(),
+              apiKey: box.querySelector('#m-api-key').value.trim(),
+              apiModel: box.querySelector('#m-api-model').value.trim(),
+              shape: box.querySelector('#m-api-shape').value
+            });
+          } catch (e) {
+            out.textContent = '✕ ' + e.message;
+          }
+        };
+
         const filesWrap = box.querySelector('#m-files');
         bindFileRows(filesWrap, box.querySelector('#m-add-file'));
 
         box.querySelector('#m-save').onclick = async () => {
           const name = box.querySelector('#m-name').value.trim();
           if (!name) return toast('模型名称不能为空', 'err');
+          if (type === 'cloud' && !box.querySelector('#m-api-base').value.trim()) {
+            return toast('云端模型要填接口地址（或点一个预设自动填）', 'err');
+          }
           const obj = {
             ...m,
             name, type,
@@ -202,9 +263,15 @@
             desc: box.querySelector('#m-desc').value.trim(),
             endpoint: box.querySelector('#m-endpoint').value.trim(),
             installPath: box.querySelector('#m-install').value.trim(),
+            apiBase: box.querySelector('#m-api-base').value.trim().replace(/\/+$/, ''),
+            apiKey: box.querySelector('#m-api-key').value.trim(),
+            apiModel: box.querySelector('#m-api-model').value.trim(),
+            shape: box.querySelector('#m-api-shape').value,
+            size: box.querySelector('#m-api-size').value.trim(),
             files: type === 'local' ? readFileRows(filesWrap) : (m.files || []),
             updatedAt: Date.now()
           };
+          if (!obj.access && type === 'cloud') obj.access = 'API';
           if (!obj.id) obj.id = U.uid('mdl');
           if (!obj.createdAt) obj.createdAt = Date.now();
           obj.loraIds = obj.loraIds || [];
@@ -1286,7 +1353,7 @@
           <div class="section">
             <div class="section-title">关于<span></span></div>
             <p class="hint" style="margin:0;line-height:1.9">
-              Loom 织造所 v2.2 · 零依赖单页应用，数据全部本地。<br>
+              Loom 织造所 v2.3 · 零依赖单页应用，数据全部本地。<br>
               PNG 内嵌参数（A1111 / ComfyUI / NovelAI）上传时自动解析；提示词采用版本链，AI 重写只追加新版本，不覆盖旧的。<br>
               所有文件在 <code>loom-vault/</code> 目录下，备份直接拷走整个文件夹即可。
             </p>

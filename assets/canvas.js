@@ -420,7 +420,7 @@ window.Canvas = (function () {
     : `<div class="cv-drop sm">${V.icon('img', 20)}<span>${slots ? '放参考图（可留空）' : '这套工作流没有图位'}</span></div>`}
         </div>
         ${n.data.status === 'done' && n.data.resultSrc ? `<img class="cv-img" src="${esc(n.data.resultSrc)}" alt="">` : ''}
-        <div class="cv-gen-meta" title="点这里换工作流">
+        <div class="cv-gen-meta" title="点这里换出图方式：本地工作流 / 云端模型">
           <span>${esc(wfLabel(n))}</span>
           <span>${slots ? slots + ' 个图位' : '纯文生图'}</span>
         </div>
@@ -726,6 +726,10 @@ window.Canvas = (function () {
 
   /** 节点上显示的工作流名：优先缓存的名字，其次按 id 现查（导入/复用时 wfName 可能是空的） */
   function wfLabel(n) {
+    if (n.data.cloudModelId) {
+      const m = V.state.models.find(x => x.id === n.data.cloudModelId);
+      return m ? '☁ ' + m.name : '☁ 云端模型';
+    }
     if (n.data.wfName) return n.data.wfName;
     const wf = V.state.workflows.find(w => w.id === n.data.workflowId);
     return wf ? wf.name : '未绑定工作流';
@@ -2082,6 +2086,12 @@ window.Canvas = (function () {
       negative = prompts.find(p => p.data.role === '负向')?.data.text || '';
     }
 
+    // 云端模型：不走 ComfyUI，直接调云端 API（在模型库里配的「云端 API」）
+    const cloudModel = n.data.cloudModelId
+      ? V.state.models.find(m => m.id === n.data.cloudModelId && m.type === 'cloud')
+      : null;
+    if (cloudModel) return runCloudGen(n, cloudModel, { positive, negative, refs });
+
     // 工作流
     const wfId = n.data.workflowId;
     const wf = V.state.workflows.find(w => w.id === wfId);
@@ -2206,6 +2216,65 @@ window.Canvas = (function () {
     }
   }
 
+  /* ============================================================
+     云端出图：模型库里 type=cloud 的模型，提示词直接发给云端 API
+     ============================================================ */
+  async function runCloudGen(n, model, { positive, negative, refs }) {
+    if (!positive) return V.toast('先写点提示词再生成', 'err');
+    if (!model.apiKey && !/localhost|127\.0\.0\.1/.test(model.apiBase || '')) {
+      return V.toast(`「${model.name}」还没填 API Key —— 到「模型库」里编辑这张卡片`, 'err');
+    }
+
+    n.data.canceled = false;
+    n.data.statusText = '';
+    const setStatus = (text, st = 'running', step, total) => nodeStatus(n, text, st, step, total);
+    const batch = Math.max(1, Math.min(8, Number(n.data.batch) || 1));
+
+    genStart(n, '', batch);
+    setStatus('准备中…');
+    try {
+      // 参考图转 Blob：GPT Image 系（/images/edits）和 chat 形态能吃
+      const refBlobs = [];
+      for (const r of refs) {
+        const src = r.data.hiSrc || r.data.src;
+        if (!src) continue;
+        const b = await fetch(src).then(x => x.blob()).catch(() => null);
+        if (b) refBlobs.push(b);
+      }
+      if (negative) setStatus('提示：多数云端模型不吃负向提示词，已忽略');
+
+      const collected = [];
+      for (let bi = 0; bi < batch; bi++) {
+        if (n.data.canceled) break;
+        const tag = batch > 1 ? `第 ${bi + 1}/${batch} 张 · ` : '';
+        const blobs = await Cloud.generate(model, {
+          prompt: positive, negative, count: 1, refs: refBlobs,
+          onStatus: t => setStatus(tag + t)
+        });
+        collected.push(...blobs);
+      }
+      if (!collected.length) throw new Error(n.data.canceled ? '已取消' : '云端一张都没拿到');
+
+      // 收尾和本地同一条路：finishGen 负责入库 + 节点显示 + 另起图片节点
+      await finishGen(n, { images: collected.map(b => ({ blob: b })) }, {
+        positive, negative, refs, wf: null, applied: null,
+        cloud: { id: model.id, name: model.name }
+      });
+    } catch (e) {
+      if (n.data.canceled) {
+        nodeStatus(n, '已取消', 'idle');
+        queueSave();
+        return;
+      }
+      genEnd(n);
+      n.data.status = 'error';
+      n.data.statusText = String(e.message || e).slice(0, 80);
+      const el = world.querySelector(`.cv-node[data-id="${n.id}"]`);
+      if (el) el.replaceWith(makeNodeEl(n));
+      V.toast('云端出图失败：' + (e.message || e), 'err');
+    }
+  }
+
   /** 取消：中断正在跑的 + 清空排队里还没开始的 */
   async function cancelRun(n) {
     if (n && n.data) {
@@ -2238,7 +2307,8 @@ window.Canvas = (function () {
   /** 结果收尾：入库 + 节点显示 + 另起图片节点（runGen 与「接回任务」共用） */
   async function finishGen(n, res, ctx) {
     const { api, positive, negative, refs = [], wf } = ctx || {};
-    const meta = (api && Parse.parseComfy(api)) || {};
+    // 本地：meta 从工作流解析；云端：把云端模型名塞进去，入库时自动对上模型库
+    const meta = (api && Parse.parseComfy(api)) || (ctx.cloud ? { model: ctx.cloud.name } : {});
     const refIds = refs.map(r => r.data.refId || r.data.label).filter(Boolean);
 
     n.data.statusText = '';
@@ -2450,43 +2520,65 @@ window.Canvas = (function () {
       // 只列出能直接提交的 API 格式；UI 格式绑了也跑不了，不列出来
       return !String(w.content || '').includes('"nodes"');
     });
-    if (!wfs.length) return V.toast('还没有可用的工作流，先点顶部「导入工作流」', 'err');
+    const clouds = (V.state.models || []).filter(m => m.type === 'cloud');
+    if (!wfs.length && !clouds.length) {
+      return V.toast('还没有可用的工作流，也没配云端模型 —— 点顶部「导入工作流」，或去「模型库」加一个云端 API', 'err');
+    }
 
     V.openModal({
-      title: '绑定工作流',
-      sub: '生成节点会把提示词和参考图写进这个工作流再提交',
+      title: '绑定出图方式',
+      sub: '选本地工作流（走 ComfyUI），或选云端模型（直接调 API）',
       wide: true,
       body: `<div class="entity-list">
+        ${clouds.map(m => `
+          <div class="entity">
+            <div class="entity-mark" style="color:var(--rose)">☁</div>
+            <div class="entity-main">
+              <b>${esc(m.name)}</b>
+              <span class="hint" style="margin:0">${esc(m.platform || '')} · 云端 API</span>
+            </div>
+            <button class="btn sm ${n.data.cloudModelId === m.id ? 'primary' : ''}" data-bindcloud="${m.id}">
+              ${n.data.cloudModelId === m.id ? '已绑定' : '绑定'}
+            </button>
+          </div>`).join('')}
         ${wfs.map(w => {
           return `<div class="entity">
             <div class="entity-mark">${V.icon('flow', 15)}</div>
             <div class="entity-main">
               <b>${esc(w.name)}</b>
             </div>
-            <button class="btn sm ${n.data.workflowId === w.id ? 'primary' : ''}" data-bindwf="${w.id}">
-              ${n.data.workflowId === w.id ? '已绑定' : '绑定'}
+            <button class="btn sm ${!n.data.cloudModelId && n.data.workflowId === w.id ? 'primary' : ''}" data-bindwf="${w.id}">
+              ${!n.data.cloudModelId && n.data.workflowId === w.id ? '已绑定' : '绑定'}
             </button>
           </div>`;
         }).join('')}
       </div>`,
       footer: `<button class="btn" data-close>关闭</button>`,
       onMount: (box, close) => {
+        const bind = (data) => {
+          pushHistory();
+          Object.assign(n.data, data);
+          close();
+          renderAll();
+          queueSave();
+        };
+        box.querySelectorAll('[data-bindcloud]').forEach(b => b.onclick = () => {
+          const m = clouds.find(x => x.id === b.dataset.bindcloud);
+          bind({ cloudModelId: m.id, workflowId: '', wfName: '', model: m.name, imageSlots: 0 });
+          V.toast('已绑定云端模型：' + m.name, 'ok');
+        });
         box.querySelectorAll('[data-bindwf]').forEach(b => b.onclick = () => {
           const w = wfs.find(x => x.id === b.dataset.bindwf);
-          pushHistory();
-          n.data.workflowId = w.id;
-          n.data.wfName = w.name;
           try {
             const j = JSON.parse(w.content || '{}');
             if (!j.nodes) {
               const info = Comfy.analyzeApi(j);
-              n.data.model = info.model || '';
-              n.data.imageSlots = info.imageIds.length;
+              bind({ cloudModelId: '', workflowId: w.id, wfName: w.name, model: info.model || '', imageSlots: info.imageIds.length });
+              V.toast('已绑定：' + w.name, 'ok');
+              return;
             }
           } catch { }
-          close();
-          renderAll();
-          queueSave();
+          bind({ cloudModelId: '', workflowId: w.id, wfName: w.name, imageSlots: 0 });
           V.toast('已绑定：' + w.name, 'ok');
         });
       }

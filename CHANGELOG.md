@@ -4,6 +4,20 @@
 
 ## [未发布]
 
+### 新增（云端出图：不装引擎也能画）
+
+- **模型库「云端 API」完整配置**：预设目录一键填好（GPT Image 1 / DALL·E 3 / 智谱 CogView-4 /
+  阿里通义万相 2.5 / 火山 Seedream 4.0 / Google Imagen 4 / BFL FLUX 1.1 Pro / SiliconFlow Kolors /
+  中转站），加 API Key 与模型名即可；「测试连接」探 /models 验配置。Key 只存本机。
+- **调用形态（assets/cloud.js 新模块）**：
+  - `images` —— OpenAI 兼容 `/v1/images/generations`（覆盖绝大多数中转站；GPT Image 系带参考图时
+    自动走 `/images/edits` 图生图）
+  - `chat` —— 部分中转把生图模型包成对话接口，从回复里抠 markdown 图片链接 / base64
+  - `dashscope` —— 万相异步任务（提交 → 轮询 task_id）；`bfl` —— Flux 异步任务；`google` —— Imagen :predict
+  - 浏览器直连被 CORS 挡住时自动回落本地服务代理（`/comfy?u=`，转发 Authorization）
+- **画布输出节点支持绑定云端模型**：「绑定出图方式」弹窗分两段（☁ 云端模型 / 本地工作流）；
+  云端结果照常入图库并按模型名自动关联模型卡；多数云端不吃负向词与参考图，画布如实提示。
+
 ### 新增（资产自动维护：导入即登记）
 
 - **模型库自动登记**：导入工作流（或启动时补登记内置工作流）时，把里面 UNET /
