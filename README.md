@@ -4,14 +4,28 @@
 >
 > 项目仓库 [github.com/Atom-kkk/loom-vault](https://github.com/Atom-kkk/loom-vault) · 作者 [@Atom-kkk](https://github.com/Atom-kkk) · [MIT 许可](LICENSE)
 
+> **第一次用？先看 [《小白图文教程》](小白图文教程.md)。**
+> 从「下载压缩包」讲到「第一张图进图库」，每步都有截图，不需要任何前置知识。
+
 本地优先的 AI 出图工作台。把你自己用大模型生成的图集中存起来，连同**模型、LoRA、工作流、提示词、生成参数**一起管理。数据全部留在本机浏览器，不上传任何服务器。联网只发生在你主动触发的场景：调用自己配置的 AI 接口、访问本地 ComfyUI，以及打开参考图时按需下载高清原图（下载后会缓存到本机）。
 
-![无限画布](docs/showcase-canvas.png)
+![无限画布](docs/screenshots/06-canvas-flow.png)
 
 零依赖、零构建：纯 HTML + CSS + 原生 JS + IndexedDB，不需要 npm install。
 配色沿用 **AI-Face-Resource-Library** 的暖纸体系：米白纸面 `#f6f3ee` / `#fffdf9`、墨色 `#1d1b19`、玫瑰点缀 `#c08a7d`，标题用衬线、正文用无衬线；深色是同一套的暖黑反转（`#141311` / `#1d1c1a` / `#efe9e1`），右上角保留一点玫瑰色晕光。
 
 侧栏右缘的小箭头可以把它收成 **62px 图标栏**，给画布腾出空间；状态保存在本机，重开不会弹回去。悬停图标仍能看见栏目名。
+
+### 界面一览
+
+| | |
+|---|---|
+| ![图库](docs/screenshots/03-gallery.png) | ![点开一张图](docs/screenshots/04-lightbox.png) |
+| 图库：拖入即存，自动解析内嵌参数 | 点开一张图：提示词版本链、参数档案、送去画布 |
+| ![输出节点](docs/screenshots/07-canvas-node.png) | ![资源监控](docs/screenshots/20-monitor.png) |
+| 输出节点：尺寸 / 张数 / 生成，状态行带已用与预计 | 资源监控：队列、显存、内存、CPU、版本 |
+
+更多截图（参考图库、提示词组合台、模型库、设置页、遮罩编辑器等 24 张）在 [`docs/screenshots/`](docs/screenshots/)，全部由 `scripts/make_shots.mjs` 从当前版本的真实界面自动截取。
 
 ---
 
@@ -64,7 +78,8 @@ python3 serve.py                # 启动（或双击 start.command / start.bat�
 
 1. **设置 → ComfyUI → 下载并安装**（或命令行 `scripts/setup-engine`）：自动装好 ComfyUI 引擎（含独立 Python 环境 + PyTorch），并写进配置。装完点「启动引擎」。
 2. **模型目录自动识别（一般不用手填）**：打开「画布 → 高级选项」，Loom 会自动扫描并填好六类目录（底模 / 扩散模型 / CLIP / 文本编码器 / VAE / LoRA），每项标「自动识别」并显示找到几个模型、还有几个正在下载。
-   扫描位置按优先级：`<安装根>/models` → `ComfyUI/models` → `~/ComfyUI/models` → `~/ComfyUI-Shared/models`，同一类型取「有内容的、模型多的」那个。
+   **默认就是 ComfyUI 自带的 `models/`** —— 多数人的模型就放在这里，而且 ComfyUI 本身只认这里，放别处还得写配置挂载，多一层就多一个出错点。
+   扫描位置按优先级：`ComfyUI/models` → `<安装根>/models` → `~/ComfyUI/models` → `~/ComfyUI-Shared/models`，同一类型取「有内容的、模型多的」那个（同分时取靠前的）。
    启动引擎时会把这些目录**自动写进 `extra_model_paths.yaml`**（只写 ComfyUI 目录之外的，避免模型列表重复），换/升级 ComfyUI 都不会丢模型。
    想手动指定别的目录，直接改输入框再点「保存路径」，会重启引擎使其生效。
 3. 导入工作流（或从「简易节点包」拿一个）→ 写提示词 → 点「生成」，Loom 自动拉起引擎出图。
@@ -85,6 +100,7 @@ python3 serve.py                # 启动（或双击 start.command / start.bat�
 
 - 🖼️ **图库**：拖入即存，自动解析 A1111 / ComfyUI 内嵌的提示词、种子、步数、LoRA
 - 🧩 **无限画布**：节点式连线，正向/负向提示词 + 参考图 → 输出，一键出图；自动拉起本地 ComfyUI 引擎
+- 📐 **出图尺寸随手改**：卡片上直接调宽 × 高（图片与视频通用），带 1:1 / 3:2 / 16:9 / 竖屏等常用比例，自动吸附到 64 的倍数
 - 📊 **资源监控**：顶栏常驻「运行中 / 排队 / 显存」，展开看显卡、内存、CPU、版本；生成节点上有已用时间与预计剩余
 - 🎭 **参考图库**：内置 4300+ 张服饰 / 人脸 / 姿势参考，按需加载高清原图
 - ✍️ **提示词版本链**：改一版存一版，永不覆盖，随时回退对比
@@ -249,7 +265,25 @@ shallow depth of field, photorealistic, fine skin detail, subtle film grain
 - **刷新不丢任务**：节点会记住引擎的任务编号（promptId），刷新 / 关掉标签再回来会**自动接回**正在跑的任务，跑完照常入库
 - **「引擎出图」导入**：顶栏按钮列出 ComfyUI `output/` 里的图，单张或全部导入图库，PNG 内嵌参数照样解析
 - **模型目录自动识别**：「高级选项」打开即扫描并预填底模 / 扩散模型 / CLIP / 文本编码器 / VAE / LoRA 六类路径，启动引擎时自动写进 `extra_model_paths.yaml`
+  - **默认就是 ComfyUI 自带的 `models/`** —— 那是 ComfyUI 唯一认的目录，放这里最省事；安装目录旁的共享 `models` 只在自带目录空着时才顶上
+  - 同类型有多个候选时按「有内容 > 模型多 > 根目录靠前」打分，不会因为某个空目录排在前面就选错
+- **出图尺寸随手改**：输出节点上直接填宽 × 高，图片和视频同一套逻辑
 - **资源监控**：顶栏右侧一个胶囊常驻显示「运行中 1（排队 3）· 显存 94%」，点开是显卡 / 内存 / CPU / 版本 / 释放显存面板，详见下面「资源监控与预计时间」
+
+**出图尺寸（图片 / 视频通用）**
+
+工作流标了 `width` / `height`（或一个 `size` 顶两个）时，输出节点上会多出一行：
+
+```
+尺寸  [1216] × [832]  [3:2 ▾]
+```
+
+- **只有工作流声明了尺寸槽位才出现** —— 没标就别显示，改了也不会生效，不如不给假按钮
+- **自动吸附 64 的倍数**：ComfyUI 的 latent 按 8 对齐，这里统一按 64 取整（某些模型要求 64），输入 1000 会在失焦时变成 1024
+- **范围 64 ~ 4096**，超出夹回边界
+- **预设比例**：1:1 / 3:2 / 2:3 / 4:3 / 3:4 / 16:9 / 9:16，外加两个视频常用档（1280×704 / 704×1280）
+- **视频工作流**会多出一行「时长」（秒），和尺寸走同一套槽位协议
+- 用户改过的值存在节点上（`data.width` / `data.height`），**没改过就用工作流里原本的宽高** —— 不会因为 UI 没碰过就悄悄重置成 1024
 
 **资源监控与预计时间**
 
@@ -331,6 +365,7 @@ shallow depth of field, photorealistic, fine skin detail, subtle film grain
 | `negative_prompt` | 负向提示词 | 同上 |
 | `seed` / `steps` / `cfg` / `denoise` | 采样参数 | 数值节点的 `value` / `seed` |
 | `width` / `height` / `batch` / `duration` | 尺寸、张数、时长 | 数值节点 |
+| `size` | **一个顶宽高两个**，用于宽高在同一节点的情形（`EmptyLatentImage` / `EmptyLatentVideo`） | 节点里的 `width` + `height` 两个输入 |
 | `ref_image_01` ~ `ref_image_09` | 参考图，**编号就是优先级** | `LoadImage.image` |
 | `ref_mask` | 重绘遮罩（白 = 重绘） | `LoadImage.image` |
 | `first_frame` / `last_frame` | 首帧 / 尾帧 | `LoadImage.image` |
@@ -369,7 +404,8 @@ shallow depth of field, photorealistic, fine skin detail, subtle film grain
 
 **简易节点包**：顶栏「简易节点包」，只留「已收录」清单——导入过的工作流都会自动收在这里，点一下就能放上画布生图，不掺任何模板配置（模型、LoRA、参数都在 ComfyUI 里定）。
 
-**小白手册**：完整上手指南见 [无限画布使用手册.md](无限画布使用手册.md)（1200+ 行，从「画布是什么」讲到出第一张图）。
+**小白手册**：从来没装过 ComfyUI 的，看 [小白图文教程.md](小白图文教程.md) —— 从下载压缩包讲到第一张图进图库，每一步都有截图和「你应该看到什么」。
+画布的功能与设计意图，见 [无限画布使用手册.md](无限画布使用手册.md)（1100+ 行）。
 
 **UI → API 是怎么转的**（`Comfy.uiToApi`）：拉一次 ComfyUI 的 `/object_info` 拿到每个节点类型的输入定义，然后
 
@@ -460,10 +496,18 @@ ai-image-vault/
 ├── serve.py            # 本地服务器（自动找空闲端口 + 开浏览器）
 ├── start.command       # Mac / Linux 双击启动
 ├── start.bat           # Windows 双击启动
+├── 小白图文教程.md      # 零基础图文教程（从下载到出第一张图，每步带截图）
+├── 无限画布使用手册.md  # 画布的功能手册（讲设计意图与边界）
+├── 本地出图技术方案.md  # 引擎托管的技术决策与踩过的坑
 ├── demo/               # 三张示例图，其中两张带内嵌生成参数
+├── docs/
+│   └── screenshots/    # 24 张界面截图，由 scripts/make_shots.mjs 生成
 ├── scripts/
-│   └── fetch_reference.py  # 克隆后拉取 4345 张参考图缩略图（幂等、可续传）
-│   └── make_icons.py       # 重新生成 favicon.ico / apple-touch-icon（纯标准库，无 PIL）
+│   ├── fetch_reference_gcore.py  # 克隆后拉取 4345 张参考图缩略图（幂等、可续传）
+│   ├── make_icons.py             # 重新生成 favicon.ico / apple-touch-icon（纯标准库，无 PIL）
+│   ├── make_shots.mjs            # 自动截取全部界面（驱动本机 Chrome，无第三方依赖）
+│   ├── setup-engine.sh           # 命令行装 ComfyUI 引擎（macOS / Linux）
+│   └── setup-engine.bat          # 同上（Windows）
 ├── reference/          # 三个参考图库
 │   ├── data.js         # 三份元数据内联版（file:// 双击可用，优先加载）
 │   ├── outfits.json    # 1407 条服装元数据（编号/分类/关键词）
@@ -481,16 +525,24 @@ ai-image-vault/
     ├── reference.js    # 服饰 / 人脸参考库：分页网格、筛选、灯箱、组合台
     ├── snippets.js     # 提示词片段库：分组、Markdown 导入、插入到组合台
     ├── comfy.js        # ComfyUI API 封装：提交、轮询、取图、上传、工作流分析、耗时估计
-    ├── canvas.js       # 无限画布：平移缩放、节点、连线、撤销重做、工作流识别
+    ├── canvas.js       # 无限画布：平移缩放、节点、连线、撤销重做、工作流识别、尺寸控件
     ├── monitor.js      # 资源监控：顶栏徽章 + 显卡/内存/CPU/版本面板 + 释放显存
     └── manage.js       # 模型库、LoRA、工作流、分类、设置
 ```
 
 ```
 tests/
-  js/   comfy.test.js  # 槽位解析、applyInputs、UI→API 转换、插件种子兜底、耗时估计
+  js/   comfy.test.js  # 槽位解析、applyInputs、UI→API 转换、插件种子兜底、耗时估计、size 槽位
   py/   test_serve.py  # 模型扫描、extra_model_paths.yaml、端口识别、重启安全、资源采集
 scripts/test.sh        # 一条命令跑完两套（./scripts/test.sh）
+```
+
+重新生成截图（改了界面之后）：
+
+```bash
+python3 serve.py 8811 --no-open          # 一个终端把站起在 8811
+node scripts/make_shots.mjs              # 另一个终端跑截图，输出到 docs/screenshots/
+SHOTS=ref node scripts/make_shots.mjs     # 只重截名字里带 ref 的那几张（参考图库吃内存，建议分批）
 ```
 
 没有构建步骤，改完文件刷新浏览器即可生效（`serve.py` 已禁用缓存）。
@@ -578,3 +630,6 @@ scripts/test.sh        # 一条命令跑完两套（./scripts/test.sh）
 - **显存口径按 ComfyUI 报的来**：Apple Silicon 的 `vram_total` 恒为 0，面板会写「统一内存架构」并退回看内存占用
 - **预计时间只是估计**：步进外推依赖 WebSocket 进度，连不上就退回历史中位耗时；第一次跑某个工作流没有历史，只显示已用时间，不编数字
 - **`ps` 被沙箱挡时 CPU 会退化**：部分托管 / 沙箱环境禁止列进程，此时用 1 分钟平均负载估算（精度差一点），再拿不到就显示 `—`
+- **尺寸行不是所有工作流都有**：工作流没标 `width` / `height` / `size` 槽位就不显示 —— 改了也不生效，不如不给假按钮。想让它出现，去 ComfyUI 里把宽高节点的标题改成 `size`
+- **尺寸统一按 64 取整**：ComfyUI 的 latent 只要求 8 对齐，这里收得更紧（某些模型要求 64）。好处是不会出现「填了 1000 结果被悄悄裁掉」
+- **截图脚本需要本机 Chrome**：`scripts/make_shots.mjs` 走 DevTools 协议驱动真实浏览器，不装 playwright。参考图库一页 120 张、滚动自动加载，连截三张会把渲染进程顶爆，所以支持 `SHOTS=xxx` 分批跑

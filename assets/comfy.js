@@ -993,6 +993,9 @@ window.Comfy = (function () {
     seed: { kind: 'int', label: '种子' },
     width: { kind: 'int', label: '宽' },
     height: { kind: 'int', label: '高' },
+    // 宽和高挤在同一个节点里的情况（EmptyLatentImage / EmptyLatentVideo 基本都是这样）：
+    // 标一个 size 顶两个，parseSlots 会把它拆成 width + height 两个条目。
+    size: { kind: 'size', label: '尺寸' },
     batch: { kind: 'int', label: '张数' },
     steps: { kind: 'int', label: '步数' },
     cfg: { kind: 'float', label: 'CFG' },
@@ -1053,13 +1056,41 @@ window.Comfy = (function () {
       out.labeled = true;
 
       const refMatch = name.match(REF_SLOT_RE);
+
+      // size：宽和高挤在同一个节点里（EmptyLatentImage / EmptyLatentVideo 都这样）。
+      // 这里直接拆成 width + height 两个条目，写入路径跟单个标注完全一致，
+      // 上层不用为「合体槽位」写两套逻辑。
+      if (!refMatch && name === 'size') {
+        const inputs = node.inputs || {};
+        const keys = ['width', 'height'].filter(function (k) { return k in inputs; });
+        if (!keys.length) {
+          out.warnings.push('槽位 size（节点 #' + id + '）里没有 width / height 输入，改不了尺寸');
+          continue;
+        }
+        keys.forEach(function (k) {
+          if (out.numbers[k]) {
+            out.warnings.push(k + ' 被重复标注（#' + out.numbers[k].id + ' 与 #' + id + '），取前者');
+            return;
+          }
+          out.numbers[k] = {
+            id: id, field: k, name: k, class: node.class_type || '',
+            via: 'size', value: inputs[k]
+          };
+        });
+        continue;
+      }
+
       const kind = refMatch ? 'image' : SLOT_SPEC[name].kind;
       const field = slotField(node, kind);
       if (!field) {
         out.warnings.push('槽位 ' + name + '（节点 #' + id + '）找不到可写入的输入');
         continue;
       }
-      const entry = { id: id, field: field, name: name, class: node.class_type || '' };
+      const entry = {
+        id: id, field: field, name: name, class: node.class_type || '',
+        // 当前值：UI 拿它做默认显示（比如分辨率输入框预填工作流里原本的宽高）
+        value: node.inputs[field]
+      };
 
       if (refMatch) {
         out.refs.push(Object.assign({}, entry, { type: refMatch[1], index: Number(refMatch[2]) }));

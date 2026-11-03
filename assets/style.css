@@ -1961,6 +1961,43 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
 }
 .cv-seedfix input { accent-color: var(--rose); margin: 0; }
 
+/* 出图尺寸行：只在工作流标了 width / height / duration 槽位时才出现 */
+.cv-size {
+  display: flex; align-items: center; gap: 5px;
+  margin: 0 0 7px;
+  font-size: 10.5px; color: var(--text-3);
+  flex-wrap: wrap; row-gap: 4px;
+}
+.cv-size > span { margin-right: 1px; white-space: nowrap; }
+.cv-size > i { font-style: normal; color: var(--text-3); }
+/* 必须带上 input[type=number] 才压得住全局那条 `width:100%; height:36px` 的表单样式 */
+.cv-size input.cv-size-num[type="number"] {
+  width: 54px; height: 22px;
+  min-width: 0;
+  padding: 0 4px;
+  border: 1px solid var(--line-input); border-radius: 6px;
+  background: var(--panel-2); color: var(--text);
+  font-family: var(--mono); font-size: 11px;
+  line-height: 20px;
+  text-align: center;
+  flex: 0 0 auto;
+  -moz-appearance: textfield;
+}
+.cv-size input.cv-size-num[type="number"]::-webkit-outer-spin-button,
+.cv-size input.cv-size-num[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.cv-size input.cv-size-num[type="number"]:focus { outline: none; border-color: var(--text-3); box-shadow: none; }
+.cv-size select {
+  width: auto; height: 22px; max-width: 104px;
+  padding: 0 18px 0 6px;
+  border: 1px solid var(--line-input); border-radius: 6px;
+  background-color: var(--panel-2); background-position: calc(100% - 11px) 9px, calc(100% - 7px) 9px;
+  color: var(--text-2);
+  font-size: 10.5px; cursor: pointer;
+  flex: 0 0 auto;
+}
+.cv-size select:focus { outline: none; border-color: var(--text-3); box-shadow: none; }
+.cv-size-unit { color: var(--text-3); }
+
 /* 重试按钮（错误状态下出现在取消的位置） */
 .cv-cancel.retry { color: var(--rose-ink); border-color: var(--rose); }
 .cv-cancel.retry:hover { background: var(--rose-soft); }

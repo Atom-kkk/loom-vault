@@ -256,8 +256,11 @@ class Engine:
         roots = []
         if comfy_dir:
             parent = os.path.dirname(os.path.abspath(comfy_dir).rstrip(os.sep))
-            roots.append((os.path.join(parent, "models"), "安装目录旁的 models"))
+            # 默认就是 ComfyUI 自带的 models —— 绝大多数人把模型放在这里，
+            # 而且 ComfyUI 本身只认这里（外部目录要靠 extra_model_paths.yaml 挂）。
+            # 安装目录旁的共享 models 排在后面，只在自带目录空着时才顶上。
             roots.append((os.path.join(comfy_dir, "models"), "ComfyUI 自带 models"))
+            roots.append((os.path.join(parent, "models"), "安装目录旁的 models"))
         home = os.path.expanduser("~")
         for name in ("ComfyUI", "ComfyUI-Shared", "comfyui",
                      "ComfyUI_windows_portable/ComfyUI", "Documents/ComfyUI"):

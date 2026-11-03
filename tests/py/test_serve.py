@@ -151,6 +151,31 @@ class TestScanModels(EngineFixture):
             out = serve.Engine.scan_models(self.engine)
             self.assertEqual(out['found'], {})
 
+    def test_comfy_own_models_is_the_default(self):
+        """两边模型数一样时，默认取 ComfyUI 自带的 models —— 那是 ComfyUI 唯一认的目录"""
+        with tempfile.TemporaryDirectory() as tmp:
+            comfy = os.path.join(tmp, 'ComfyUI')
+            own = os.path.join(comfy, 'models', 'checkpoints')
+            shared = os.path.join(tmp, 'models', 'checkpoints')
+            self._touch(own, 'a.safetensors')
+            self._touch(shared, 'b.safetensors')
+
+            self.engine._state = {'comfy_dir': comfy}
+            out = serve.Engine.scan_models(self.engine)
+            self.assertEqual(out['found']['checkpoints'], own)
+
+    def test_roots_put_comfy_models_first(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            comfy = os.path.join(tmp, 'ComfyUI')
+            own = os.path.join(comfy, 'models')
+            os.makedirs(own, exist_ok=True)
+            os.makedirs(os.path.join(tmp, 'models'), exist_ok=True)
+
+            roots = serve.Engine._model_roots(self.engine, comfy)
+            self.assertTrue(roots, '至少要有 ComfyUI 自带的 models')
+            self.assertEqual(roots[0]['path'], own)
+            self.assertIn('ComfyUI', roots[0]['label'])
+
 
 # ============================================================
 # extra_model_paths.yaml

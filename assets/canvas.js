@@ -393,6 +393,7 @@ window.Canvas = (function () {
           <span>${esc(refTxt || n.data.model || '')}</span>
         </div>
         ${slotChips(n)}
+        ${sizeRow(n)}
         ${batchRow(n)}
         ${st === 'running' && n.data.prog
           ? `<div class="cv-prog"><i style="width:${Math.min(100, Math.max(2, Math.round(n.data.prog.step / Math.max(1, n.data.prog.total) * 100)))}%"></i></div>`
@@ -421,6 +422,7 @@ window.Canvas = (function () {
           <span>${slots ? slots + ' 个图位' : '纯文生图'}</span>
         </div>
         ${slotChips(n)}
+        ${sizeRow(n)}
         ${batchRow(n)}
         ${st === 'running' && n.data.prog ? `<div class="cv-prog"><i style="width:${pct}%"></i></div>` : ''}
         ${n.data.statusText ? `<div class="cv-gen-status ${st}">${esc(n.data.statusText)}</div>` : ''}
@@ -755,6 +757,86 @@ window.Canvas = (function () {
       </div>`;
   }
 
+  /* ============================================================
+     出图尺寸（图片 / 视频通用）
+     ============================================================
+     只有工作流标了 width / height 槽位才出现 —— 没标的流改了也没用，不如不显示。
+     ComfyUI 的 latent 按 8 对齐，这里统一按 64 取整，省得用户填 1000×1000 被悄悄裁。
+  */
+  // 只写比例：具体像素已经在左边两个输入框里，下拉再写一遍会溢出 320px 卡面
+  const SIZE_PRESETS = [
+    { w: 1024, h: 1024, name: '1:1' },
+    { w: 1216, h: 832, name: '3:2' },
+    { w: 832, h: 1216, name: '2:3' },
+    { w: 1152, h: 864, name: '4:3' },
+    { w: 864, h: 1152, name: '3:4' },
+    { w: 1344, h: 768, name: '16:9' },
+    { w: 768, h: 1344, name: '9:16' },
+    { w: 1280, h: 704, name: '16:9 视频' },
+    { w: 704, h: 1280, name: '9:16 视频' }
+  ];
+  const SIZE_MIN = 64, SIZE_MAX = 4096, SIZE_STEP = 64;
+
+  /** 取整到 64 的倍数并夹在允许范围内；非法值返回 null */
+  function snapSize(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    const snapped = Math.round(n / SIZE_STEP) * SIZE_STEP;
+    return Math.max(SIZE_MIN, Math.min(SIZE_MAX, snapped));
+  }
+
+  /**
+   * 这个节点当前的出图尺寸。
+   * 优先用用户在卡片上改过的值，没改过就取工作流里原本的宽高。
+   */
+  function sizeOf(n) {
+    const s = slotsOfNode(n);
+    const nums = (s && s.numbers) || {};
+    const hasW = !!nums.width, hasH = !!nums.height;
+    const pick = (own, slot) => {
+      if (own != null) return snapSize(own);
+      return slot ? snapSize(slot.value) : null;
+    };
+    return {
+      w: pick(n.data.width, nums.width),
+      h: pick(n.data.height, nums.height),
+      hasW: hasW, hasH: hasH,
+      dur: nums.duration ? (n.data.duration != null ? Number(n.data.duration) : Number(nums.duration.value)) : null,
+      hasDur: !!nums.duration
+    };
+  }
+
+  function sizeRow(n) {
+    const sz = sizeOf(n);
+    if (!sz.hasW && !sz.hasH && !sz.hasDur) return '';
+
+    const hit = SIZE_PRESETS.find(p => p.w === sz.w && p.h === sz.h);
+    const opts = SIZE_PRESETS.map(p =>
+      `<option value="${p.w}x${p.h}" title="${p.name} · ${p.w}×${p.h}"${hit === p ? ' selected' : ''}>${p.name}</option>`
+    ).join('');
+
+    const box = (kind, val, title) =>
+      `<input class="cv-size-num" data-size="${kind}" type="number"
+              step="${SIZE_STEP}" min="${SIZE_MIN}" max="${SIZE_MAX}"
+              value="${val != null ? val : ''}" title="${title}">`;
+
+    return `<div class="cv-size">
+        <span>尺寸</span>
+        ${sz.hasW ? box('w', sz.w, '宽（64 的倍数）') : ''}
+        ${sz.hasW && sz.hasH ? '<i>×</i>' : ''}
+        ${sz.hasH ? box('h', sz.h, '高（64 的倍数）') : ''}
+        <select data-size="preset" title="常用比例">
+          <option value="">${hit ? '比例…' : '自定义'}</option>${opts}
+        </select>
+      </div>
+      ${sz.hasDur ? `<div class="cv-size">
+        <span>时长</span>
+        <input class="cv-size-num" data-size="dur" type="number" step="0.5" min="0.5" max="60"
+               value="${sz.dur != null ? sz.dur : ''}" title="视频秒数">
+        <span class="cv-size-unit">秒</span>
+      </div>` : ''}`;
+  }
+
   /* ---------------- 遮罩编辑器 ---------------- */
   async function openMaskEditor(n) {
     const src = n.data.hiSrc || n.data.src;
@@ -1025,7 +1107,7 @@ window.Canvas = (function () {
     });
 
     el.addEventListener('pointerdown', e => {
-      if (e.target.closest('textarea, button, img, input')) return;
+      if (e.target.closest('textarea, button, img, input, select')) return;
       if (e.target.classList.contains('cv-port')) return;
       selectNode(n.id, e.shiftKey);
       startDrag(e, 'node', n);
@@ -1065,6 +1147,54 @@ window.Canvas = (function () {
     }
 
     // 工作流节点的参数：改完写回源工作流并重新生成 API
+    // 出图尺寸：输入时立刻记进节点数据，失焦时再取整显示（避免边打字边被改写）
+    el.querySelectorAll('[data-size]').forEach(inp => {
+      inp.addEventListener('pointerdown', e => e.stopPropagation());
+      inp.addEventListener('wheel', e => e.stopPropagation());
+      inp.addEventListener('keydown', e => e.stopPropagation());
+
+      const kind = inp.dataset.size;
+
+      if (kind === 'preset') {
+        inp.addEventListener('change', () => {
+          const m = /^(\d+)x(\d+)$/.exec(inp.value);
+          if (!m) { inp.value = ''; return; }
+          pushHistory();
+          n.data.width = Number(m[1]);
+          n.data.height = Number(m[2]);
+          queueSave();
+          refreshNode(n);
+        });
+        return;
+      }
+
+      if (kind === 'dur') {
+        inp.addEventListener('change', () => {
+          const v = Number(inp.value);
+          if (!Number.isFinite(v) || v <= 0) { refreshNode(n); return; }
+          n.data.duration = Math.max(0.5, Math.min(60, v));
+          queueSave();
+        });
+        return;
+      }
+
+      // w / h
+      inp.addEventListener('input', () => {
+        const v = snapSize(inp.value);
+        if (v == null) return;
+        if (kind === 'w') n.data.width = v; else n.data.height = v;
+        queueSave();
+      });
+      inp.addEventListener('blur', () => {
+        // 输错了就还原成上一次的有效值，别留个空格子
+        const v = snapSize(inp.value);
+        if (v == null) { refreshNode(n); return; }
+        if (kind === 'w') n.data.width = v; else n.data.height = v;
+        queueSave();
+        refreshNode(n);
+      });
+    });
+
     el.querySelectorAll('[data-cvw]').forEach(inp => {
       const i = Number(inp.dataset.cvw);
       const commit = () => {
@@ -1684,6 +1814,7 @@ window.Canvas = (function () {
 
       const collected = [];
       let lastApplied = null;
+      const sz = sizeOf(n);
 
       for (let bi = 0; bi < batch; bi++) {
         if (n.data.canceled) break;
@@ -1693,7 +1824,9 @@ window.Canvas = (function () {
         const applied = Comfy.applyInputs(api, {
           prompt: positive, negative, images: names,
           mask: maskName || undefined,
-          seed: seedVal === null ? undefined : seedVal
+          seed: seedVal === null ? undefined : seedVal,
+          width: sz.hasW ? sz.w : undefined,
+          height: sz.hasH ? sz.h : undefined
         });
         lastApplied = applied;
         n.data.imageSlots = applied.slots;

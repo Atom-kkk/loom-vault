@@ -428,3 +428,96 @@ describe('etaText', () => {
     assert.equal(comfy.etaText(g, T0 - 30_000), '已用 00:00');
   });
 });
+
+/* ============================================================
+   分辨率槽位：parseSlots 要带出工作流里的当前宽高，
+   画布上的尺寸输入框靠它预填（用户不改就沿用工作流原值）
+   ============================================================ */
+describe('parseSlots · 分辨率与时长', () => {
+  const sized = () => ({
+    '1': { inputs: { value: 'p' }, _meta: { title: 'prompt' } },
+    '2': { inputs: { value: 1216 }, _meta: { title: 'width' } },
+    '3': { inputs: { value: 832 }, _meta: { title: 'height' } },
+    '4': { inputs: { value: 5 }, _meta: { title: 'duration' } }
+  });
+
+  test('width / height / duration 进 numbers，且带出当前值', () => {
+    const s = comfy.parseSlots(sized());
+    assert.equal(s.numbers.width.id, '2');
+    assert.equal(s.numbers.width.value, 1216);
+    assert.equal(s.numbers.height.value, 832);
+    assert.equal(s.numbers.duration.value, 5);
+  });
+
+  test('applyInputs 只写传进来的那一个，没传的保持工作流原值', () => {
+    const s = comfy.parseSlots(sized());
+    const r1 = comfy.applyInputs(sized(), { width: 768 });
+    assert.equal(r1.api['2'].inputs.value, 768, '宽度被改');
+    assert.equal(r1.api['3'].inputs.value, 832, '高度不动');
+    assert.ok(s.numbers.height, '原始解析仍然记得高度槽位');
+
+    const r2 = comfy.applyInputs(sized(), { width: 768, height: 1344 });
+    assert.equal(r2.api['2'].inputs.value, 768);
+    assert.equal(r2.api['3'].inputs.value, 1344);
+  });
+
+  test('传空值 / NaN 不写（不把工作流里的尺寸弄坏）', () => {
+    const r = comfy.applyInputs(sized(), { width: '', height: null });
+    assert.equal(r.api['2'].inputs.value, 1216);
+    assert.equal(r.api['3'].inputs.value, 832);
+  });
+
+  test('没标尺寸槽位的流，传了也无处可写、不报错', () => {
+    const r = comfy.applyInputs(legacyWorkflow(), { width: 1024, height: 1024 });
+    assert.equal(r.mode, 'legacy');
+    assert.ok(r.api['1'].inputs);
+  });
+});
+
+/* ============================================================
+   size 合体槽位：宽高在同一个节点（EmptyLatentImage / 视频 latent）
+   ============================================================ */
+describe('size 合体槽位', () => {
+  const latent = () => ({
+    '1': { class_type: 'EmptyLatentImage', inputs: { width: 1216, height: 832, batch_size: 1 }, _meta: { title: 'size' } }
+  });
+
+  test('一个 size 顶 width + height，带出原值', () => {
+    const s = comfy.parseSlots(latent());
+    assert.equal(s.labeled, true);
+    assert.equal(s.numbers.width.field, 'width');
+    assert.equal(s.numbers.height.field, 'height');
+    assert.equal(s.numbers.width.value, 1216);
+    assert.equal(s.numbers.height.value, 832);
+    assert.equal(s.numbers.width.id, '1');
+    assert.equal(s.numbers.width.via, 'size');
+  });
+
+  test('applyInputs 写进同一个节点的两个 input', () => {
+    const r = comfy.applyInputs(latent(), { width: 768, height: 1344 });
+    assert.equal(r.api['1'].inputs.width, 768);
+    assert.equal(r.api['1'].inputs.height, 1344);
+    assert.equal(r.api['1'].inputs.batch_size, 1, '别的 input 不许动');
+  });
+
+  test('只给宽度就只改宽度，高度留原值', () => {
+    const r = comfy.applyInputs(latent(), { width: 1024 });
+    assert.equal(r.api['1'].inputs.width, 1024);
+    assert.equal(r.api['1'].inputs.height, 832);
+  });
+
+  test('节点里没有 width / height 时给出警告而不是静默失效', () => {
+    const s = comfy.parseSlots({ '1': { inputs: { value: 1 }, _meta: { title: 'size' } } });
+    assert.ok(s.warnings.some(w => /size/.test(w)), s.warnings.join('|'));
+  });
+
+  test('单独标 width / height 的老写法照样能用', () => {
+    const s = comfy.parseSlots({
+      '1': { inputs: { value: 512 }, _meta: { title: 'width' } },
+      '2': { inputs: { value: 768 }, _meta: { title: 'height' } }
+    });
+    assert.equal(s.numbers.width.id, '1');
+    assert.equal(s.numbers.height.id, '2');
+    assert.equal(s.numbers.width.via, undefined);
+  });
+});
