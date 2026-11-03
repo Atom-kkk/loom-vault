@@ -20,6 +20,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const net = require('node:net');
 const http = require('node:http');
+const updater = require('./updater');
 
 const IS_WIN = process.platform === 'win32';
 const MIN_PY = [3, 10];
@@ -404,6 +405,8 @@ function buildMenu() {
     {
       label: '帮助',
       submenu: [
+        { label: '检查更新…', click: () => updateFlow(false) },
+        { type: 'separator' },
         { label: '项目主页', click: () => shell.openExternal('https://github.com/Atom-kkk/loom-vault') },
         { label: '在线体验', click: () => shell.openExternal('https://atom-kkk.github.io/loom-vault/') },
         { label: '打开数据目录', click: () => shell.openPath(app.getPath('userData')) }
@@ -451,6 +454,72 @@ async function boot() {
 }
 
 /* ------------------------------------------------------------
+   内置更新：检查 → 询问 → 下载（任务栏进度）→ 引导安装
+   ------------------------------------------------------------ */
+let updateBusy = false;
+
+async function updateFlow(silent) {
+  if (updateBusy) return;
+  updateBusy = true;
+  const win0 = win;
+  try {
+    const r = await updater.checkForUpdate();
+    rememberCheck();
+    if (!r.hasUpdate) {
+      if (!silent) dialog.showMessageBox(win0, {
+        type: 'info', title: '检查更新',
+        message: `已经是最新版本（v${r.current}）`
+      });
+      return;
+    }
+    const act = (await dialog.showMessageBox(win0, {
+      type: 'info',
+      title: '发现新版本',
+      message: `发现新版本 v${r.latest}（当前 v${r.current}）`,
+      detail: '更新包在 GitHub Releases 上，大小约 170–210 MB。\n下载完成后会自动打开安装器。',
+      buttons: ['立即下载', '查看发布页', '以后再说'],
+      defaultId: 0, cancelId: 2, noLink: true
+    })).response;
+    if (act === 1) { shell.openExternal(r.page); return; }
+    if (act !== 0) return;
+
+    const target = win0 || win;
+    const file = await updater.downloadUpdate(r.latest, (p) => {
+      if (target && !target.isDestroyed()) target.setProgressBar(p);
+    });
+    if (target && !target.isDestroyed()) target.setProgressBar(-1);
+    const open = (await dialog.showMessageBox(target, {
+      type: 'info', title: '下载完成',
+      message: `v${r.latest} 已下载完成`,
+      detail: file,
+      buttons: ['立即安装', '稍后自己打开'], defaultId: 0, cancelId: 1, noLink: true
+    })).response;
+    if (open === 0) updater.openUpdate(file);
+  } catch (e) {
+    rememberCheck();   // 失败也算查过，别每次启动都重试轰炸网络
+    if (!silent) dialog.showMessageBox(win0, {
+      type: 'warning', title: '检查更新失败',
+      message: '连不上 GitHub（可能需要代理）',
+      detail: String(e.message || e).slice(0, 300)
+    });
+  } finally {
+    updateBusy = false;
+  }
+}
+
+/** 每天最多自动静默检查一次（手动的「检查更新…」不受限） */
+function checkFile() { return path.join(app.getPath('userData'), 'update-check.json'); }
+function rememberCheck() {
+  try { fs.writeFileSync(checkFile(), JSON.stringify({ at: Date.now() })); } catch { }
+}
+function shouldAutoCheck() {
+  try {
+    const j = JSON.parse(fs.readFileSync(checkFile(), 'utf8'));
+    return Date.now() - (j.at || 0) > 24 * 3600 * 1000;
+  } catch { return true; }
+}
+
+/* ------------------------------------------------------------
    单实例 / 生命周期
    ------------------------------------------------------------ */
 if (!app.requestSingleInstanceLock()) {
@@ -463,6 +532,8 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     buildMenu();
     boot();
+    // 启动后 5 秒静默检查更新（每天最多一次，失败不打扰）
+    setTimeout(() => { if (shouldAutoCheck()) updateFlow(true); }, 5000);
   });
 
   app.on('window-all-closed', () => {

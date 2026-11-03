@@ -9,7 +9,7 @@ on:
     tags: ['v*']
 
 permissions:
-  contents: read
+  contents: write   # 打 v* 标签时要把安装包发布到 GitHub Release（内置更新器从这里拉）
 
 jobs:
   build:
@@ -92,3 +92,14 @@ jobs:
           path: ${{ matrix.glob }}
           if-no-files-found: error
           retention-days: 30
+
+      # 内置更新器从 GitHub Releases 拉安装包，所以打 v* 标签时顺手发布
+      - name: Publish to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            desktop/dist/*.dmg
+            desktop/dist/*-mac.zip
+            desktop/dist/*.exe
+          fail_on_unmatched_files: true

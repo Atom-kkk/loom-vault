@@ -1781,7 +1781,7 @@ window.Canvas = (function () {
       });
       const wired = autoWire(n);
       renderEdges();
-      if (!wf) V.toast('还没有工作流 —— 点顶栏「导入工作流」，或去「工作流」页加一套', 'err');
+      if (!wf) V.toast('还没有工作流 —— 点顶栏「导入工作流」，或去「本地部署工作流」页加一套', 'err');
       else if (wired) V.toast('加了输出节点，已自动接上 ' + wired + ' 个提示词', 'ok');
       else V.toast('加了输出节点 · ' + wf.name, 'ok');
     }
@@ -2222,7 +2222,7 @@ window.Canvas = (function () {
   async function runCloudGen(n, model, { positive, negative, refs }) {
     if (!positive) return V.toast('先写点提示词再生成', 'err');
     if (!model.apiKey && !/localhost|127\.0\.0\.1/.test(model.apiBase || '')) {
-      return V.toast(`「${model.name}」还没填 API Key —— 到「模型库」里编辑这张卡片`, 'err');
+      return V.toast(`「${model.name}」还没填 API Key —— 到「云端模型」页编辑这张卡片`, 'err');
     }
 
     n.data.canceled = false;
@@ -2522,7 +2522,7 @@ window.Canvas = (function () {
     });
     const clouds = (V.state.models || []).filter(m => m.type === 'cloud');
     if (!wfs.length && !clouds.length) {
-      return V.toast('还没有可用的工作流，也没配云端模型 —— 点顶部「导入工作流」，或去「模型库」加一个云端 API', 'err');
+      return V.toast('还没有可用的工作流，也没配云端模型 —— 点顶部「导入工作流」，或去「云端模型」页加一个云端 API', 'err');
     }
 
     V.openModal({

@@ -204,11 +204,9 @@ window.Vault = (function () {
       ${item('faces', '人脸参考', 'user', (window.REF && REF.counts().faces) || '')}
       ${item('poses', '姿势参考', 'user', (window.REF && REF.counts().poses) || '')}
       ${item('composer', '提示词组合', 'spark', (window.REF && REF.stageCount()) || '')}
-      ${item('snippets', '提示词片段', 'list', (window.SNIP && SNIP.count()) || '')}
-      <div class="nav-label">本地资产</div>
-      ${item('models', '模型库', 'cpu', state.models.length || '')}
-      ${item('loras', 'LoRA', 'layers', state.loras.length || '')}
-      ${item('workflows', '工作流', 'flow', state.workflows.length || '')}
+      <div class="nav-label">模型</div>
+      ${item('models', '云端模型', 'cpu', state.models.length || '')}
+      ${item('workflows', '本地部署工作流', 'flow', state.workflows.length || '')}
       <div class="nav-label">管理</div>
       ${item('local', '本地配置', 'cpu', null)}
       ${item('ai', 'AI 智能体', 'spark', null)}

@@ -16,8 +16,8 @@ window.AI = (function () {
       key: 'deepseek',
       label: 'DeepSeek',
       baseUrl: 'https://api.deepseek.com',
-      // 默认模型取数组第一项（agent.model 为空时回落到 models[0]，见 chat()）
-      models: ['deepseek-flash', 'deepseek-chat', 'deepseek-reasoner'],
+      // 只保留 deepseek-flash（旧 chat / reasoner 已弃用，用户明确不要）
+      models: ['deepseek-flash'],
       needKey: true,
       hint: '在 platform.deepseek.com 申请 Key，按 token 计费'
     },
