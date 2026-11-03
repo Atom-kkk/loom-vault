@@ -1260,7 +1260,8 @@
     actions: () => '',
     render: async (c) => {
       c.innerHTML = `
-        <div style="max-width:820px">
+        <div style="display:flex;gap:36px;align-items:flex-start;flex-wrap:wrap">
+        <div style="max-width:820px;flex:1 1 620px;min-width:0">
           <div class="section">
             <div class="section-title">数据<span></span></div>
             <p class="hint" style="margin:0 0 10px">图片与元数据都存在这台机器的浏览器 IndexedDB 里。换设备或重装浏览器前记得导出。</p>
@@ -1302,6 +1303,25 @@
               <a href="https://www.iesdouyin.com/share/user/MS4wLjABAAAAQc4NN1_Ms30-2s2a5hjyZ2CweDIDkX2eSwaure41sOyXx7ogYtv8fmsKsAgB9lZv" target="_blank" rel="noopener">抖音主页</a>
             </div>
           </div>
+        </div>
+
+        <div style="flex:0 1 300px;position:sticky;top:18px">
+          <div class="section">
+            <div class="section-title">支持作者<span></span></div>
+            <p class="hint" style="margin:0 0 12px;line-height:1.8">如果 Loom 让你的 AI 创作更顺畅、帮你省下了折腾环境的时间，欢迎请作者喝杯咖啡 —— 这是开源路上最温暖的动力。</p>
+            <div style="display:flex;gap:10px">
+              <figure style="flex:1;margin:0;text-align:center;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 8px">
+                <img src="assets/donate-wechat.jpg" alt="微信支付收款码" style="width:100%;border-radius:8px;display:block">
+                <figcaption style="font-size:11.5px;color:var(--text-2);margin-top:7px">微信支付</figcaption>
+              </figure>
+              <figure style="flex:1;margin:0;text-align:center;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 8px">
+                <img src="assets/donate-alipay.jpg" alt="支付宝收款码" style="width:100%;border-radius:8px;display:block">
+                <figcaption style="font-size:11.5px;color:var(--text-2);margin-top:7px">支付宝</figcaption>
+              </figure>
+            </div>
+            <p class="hint" style="margin:10px 0 0;font-size:11px">扫码即可 · 金额随意，没预算也没关系，用得开心就好</p>
+          </div>
+        </div>
         </div>`;
 
       const { used, quota } = await DB.usage();
