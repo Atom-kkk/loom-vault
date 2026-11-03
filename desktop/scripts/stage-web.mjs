@@ -3,8 +3,11 @@
    在 CI 的受限环境里处理 4345 个缩略图时容易挂。 */
 import { cpSync, mkdirSync, rmSync, existsSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = path.resolve(import.meta.dirname, '..', '..');
+// 用 fileURLToPath 而不是 import.meta.dirname：后者要 Node 20.11+，CI 的 20.x 未必够
+const here = path.dirname(fileURLToPath(import.meta.url));
+const root = path.resolve(here, '..', '..');
 const dst = path.join(root, 'desktop', 'staging');
 
 rmSync(dst, { recursive: true, force: true });

@@ -24,12 +24,16 @@ jobs:
             glob: |
               desktop/dist/*.dmg
               desktop/dist/*.zip
+            build_cmd: npm run stage && npx electron-builder --mac --arm64
+            dump_cmd: cd desktop && npx electron-builder --mac --arm64 2>&1 | tail -60
           - os: windows-latest
             name: Windows
             script: dist:win
             artifact: Loom-Windows
             glob: |
               desktop/dist/*.exe
+            build_cmd: npm run stage && npx electron-builder --win --x64
+            dump_cmd: cd desktop && npx electron-builder --win --x64 2>&1 | tail -60
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
@@ -46,13 +50,19 @@ jobs:
         working-directory: desktop
         run: npm ci --no-audit --no-fund
 
-      # 没买代码签名证书，明确关掉自动发现，否则 electron-builder 会去找钥匙串报错
+      # 没买代码签名证书，明确关掉自动发现，否则 electron-builder 会去找钥匙串报错。
+      # 只打当前 runner 架构，别让一台机器去下两个平台的 electron。
       - name: Build
         working-directory: desktop
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run ${{ matrix.script }}
+        run: ${{ matrix.build_cmd }}
+
+      # 构建挂了就把日志原样打出来，省得再去翻 Artifact
+      - name: Dump build log on failure
+        if: failure()
+        run: ${{ matrix.dump_cmd }}
 
       - uses: actions/upload-artifact@v4
         with:
