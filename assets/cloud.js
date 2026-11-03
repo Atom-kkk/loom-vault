@@ -25,44 +25,39 @@ window.Cloud = (function () {
      中转站用户：选「OpenAI 兼容（中转站）」预设，填中转站地址和模型名。 */
   const CLOUD_PRESETS = [
     {
-      key: 'openai-gpt-image', name: 'GPT Image 1', vendor: 'OpenAI',
-      base: 'https://api.openai.com/v1', model: 'gpt-image-1', shape: 'images',
-      note: '擅长指令遵循与文字渲染；支持图生图（/images/edits）'
+      key: 'openai-gpt-image', name: 'GPT-Image 2.5', vendor: 'OpenAI',
+      base: 'https://api.openai.com/v1', model: 'gpt-image-2.5-sunburst', shape: 'images',
+      note: '另有 Flare 变体：直接改模型名为 gpt-image-2.5-flare；支持图生图（/images/edits）'
     },
     {
-      key: 'openai-dalle3', name: 'DALL·E 3', vendor: 'OpenAI',
-      base: 'https://api.openai.com/v1', model: 'dall-e-3', shape: 'images',
-      note: '经典文生图；不支持参考图'
+      key: 'zhipu-glm-image', name: 'GLM-Image', vendor: '智谱',
+      base: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-image', shape: 'images',
+      note: '智谱新旗舰生图模型；open.bigmodel.cn 申请 Key'
     },
     {
-      key: 'zhipu-cogview', name: 'CogView-4', vendor: '智谱',
-      base: 'https://open.bigmodel.cn/api/paas/v4', model: 'cogview-4-250304', shape: 'images',
-      note: 'open.bigmodel.cn 申请 Key，中文语感好'
+      key: 'dashscope-wan27', name: 'Wan2.7-Image Pro', vendor: '阿里云',
+      base: 'https://dashscope.aliyuncs.com', model: 'wan2.7-image-pro', shape: 'dashscope',
+      note: '通义万相 2.7 生成与编辑；异步任务制，提交后自动轮询'
     },
     {
-      key: 'dashscope-wanx', name: '通义万相 2.5', vendor: '阿里云',
-      base: 'https://dashscope.aliyuncs.com', model: 'wanx2.5-t2i-turbo', shape: 'dashscope',
-      note: '阿里云百炼申请 Key；异步任务制，提交后轮询'
+      key: 'ark-seedream', name: 'Seedream 5.0 Pro', vendor: '火山引擎（即梦）',
+      base: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-seedream-5-0-pro-260628', shape: 'images',
+      note: '另有 Flash 档：doubao-seedream-5-0-flash-260915；4.x 版本官方已标记即将下线'
     },
     {
-      key: 'ark-seedream', name: 'Seedream 4.0', vendor: '火山引擎（即梦）',
-      base: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-seedream-4-0-250828', shape: 'images',
-      note: '火山方舟申请 Key；接口是 OpenAI 风格'
+      key: 'google-nano-banana', name: 'Nano Banana 2.1', vendor: 'Google',
+      base: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-nano-banana-2.1', shape: 'chat',
+      note: '走 Gemini 的 OpenAI 兼容层（chat 返图）；支持参考图编辑，Google AI Studio 申请 Key'
     },
     {
-      key: 'google-imagen', name: 'Imagen 4', vendor: 'Google',
-      base: 'https://generativelanguage.googleapis.com/v1beta', model: 'imagen-4.0-generate-001', shape: 'google',
-      note: 'Google AI Studio 申请 Key；返回 base64'
+      key: 'bfl-flux3', name: 'FLUX 3 Image Klein', vendor: 'Black Forest Labs',
+      base: 'https://api.bfl.ai/v1', model: 'flux-3-image-klein', shape: 'bfl',
+      note: 'BFL 最新一代；另有 FLUX.2 Pro（模型名改 flux-2-pro）；异步任务制'
     },
     {
-      key: 'bfl-flux-pro', name: 'FLUX 1.1 Pro', vendor: 'Black Forest Labs',
-      base: 'https://api.bfl.ai/v1', model: 'flux-pro-1.1', shape: 'bfl',
-      note: 'api.bfl.ai 申请 Key；异步任务制'
-    },
-    {
-      key: 'siliconflow-kolors', name: 'Kolors', vendor: 'SiliconFlow',
-      base: 'https://api.siliconflow.cn/v1', model: 'Kwai-Kolors/Kolors', shape: 'images',
-      note: '硅基流动国内直连快，价格低'
+      key: 'siliconflow-kolors', name: 'Kolors 2.1', vendor: 'SiliconFlow',
+      base: 'https://api.siliconflow.cn/v1', model: 'Kwai-Kolors/Kolors-2.1', shape: 'images',
+      note: '硅基流动国内直连快；确切模型 ID 可在编辑卡片时核对'
     },
     {
       key: 'relay', name: 'OpenAI 兼容（中转站 / 自建）', vendor: '自定义',
@@ -185,12 +180,21 @@ window.Cloud = (function () {
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (model.apiKey || '') },
       body: JSON.stringify({ model: model.apiModel, messages: [{ role: 'user', content }] })
     });
-    const text = (j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
+    const msg0 = (j && j.choices && j.choices[0] && j.choices[0].message) || {};
+    let text = typeof msg0.content === 'string' ? msg0.content : '';
+    const inline = [];
+    if (Array.isArray(msg0.content)) {
+      // 多段 content（视觉模型常见）：图片在 image_url 段里，文字拼起来再兜底解析
+      for (const part of msg0.content) {
+        if (part && part.type === 'image_url' && part.image_url && part.image_url.url) inline.push(part.image_url.url);
+        if (part && typeof part.text === 'string') text += part.text;
+      }
+    }
     // 抠 markdown 图片链接或内嵌 base64
     const md = text.match(/!\[[^\]]*\]\((https?:\/\/[^)\s]+|data:image\/[^)\s]+)\)/i);
     const raw = text.match(/(https?:\/\/[^\s)"']+\.(?:png|jpe?g|webp)[^\s)"']*)/i);
     const b64 = text.match(/data:(image\/[a-z]+);base64,[A-Za-z0-9+/=]+/i);
-    const pick = (md && md[1]) || (b64 && b64[0]) || (raw && raw[1]);
+    const pick = inline[0] || (md && md[1]) || (b64 && b64[0]) || (raw && raw[1]);
     if (!pick) throw new Error('对话返回里没有图片链接（这个中转可能不是这种形态）');
     return [await toBlob(pick)];
   }

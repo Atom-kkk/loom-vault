@@ -1256,7 +1256,7 @@
 
   V.registerView('settings', {
     title: '设置',
-    sub: '硬件配置参考、数据备份、存储占用与关于 —— 引擎和 AI 各有单独一页',
+    sub: 'bug 反馈、数据备份、存储占用与关于 —— 引擎和 AI 各有单独一页',
     actions: () => '',
     render: async (c) => {
       c.innerHTML = `
@@ -1281,27 +1281,12 @@
           </div>
 
           <div class="section">
-            <div class="section-title">硬件配置参考<span></span></div>
-            <p class="hint" style="margin:0 0 10px">本地出图（ComfyUI 引擎）对硬件要求随模型档位拉开差距，按预算对号入座。统一用 fp8 量化文本编码器时下列配置均可跑 Qwen-Image 2.1 / MOSS-Image 全流程。</p>
-            <table class="file-table">
-              <tr><th>档位</th><th>Windows</th><th>Mac</th><th>适合</th></tr>
-              <tr><td><b>入门</b></td><td>8G 显存 · 32G 内存</td><td>M4 16G</td><td>跑得动，出一张图要等</td></tr>
-              <tr><td><b>基础</b></td><td>16G 显存 · 64G 内存</td><td>M5 Pro 48G</td><td>日常使用流畅</td></tr>
-              <tr><td><b>推荐</b></td><td>32G 显存 · 96G 内存</td><td>M5 Max 128G</td><td>多图参考编辑无压力</td></tr>
-              <tr><td><b>旗舰</b></td><td>96G 显存 · 256G 内存</td><td>M5 Ultra 512G</td><td>批量出图 / 商用产能</td></tr>
-            </table>
-            <div class="hint" style="margin:10px 0 0;line-height:1.9">
-              <b>显卡推荐（40 系 / 50 系）</b><br>
-              · 8G 显存：4060 / 4060Ti / 5060 等尽可能选显存大的<br>
-              · 16G 显存：5060Ti 16G（速度较慢）· 5070Ti 16G · 5080 16G · 4090 24G 等<br>
-              · 32G 显存：5090 · 4090 48G 魔改<br>
-              · 96G 显存：RTX PRO 6000
-            </div>
-            <div class="hint" style="margin:10px 0 0;line-height:1.9">
-              欢迎各配置的用户发送实测时间 / 软件 bug：<br>
+            <div class="section-title">反馈<span></span></div>
+            <p class="hint" style="margin:0;line-height:1.9">
+              如遇到软件 bug，请及时反馈：<br>
               · 邮箱：<a href="mailto:517298997@qq.com">517298997@qq.com</a><br>
               · QQ：19744249（添加请备注来源）
-            </div>
+            </p>
           </div>
 
           <div class="section">

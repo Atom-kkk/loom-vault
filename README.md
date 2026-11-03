@@ -112,7 +112,7 @@ python3 serve.py                # 启动（或双击 start.command / start.bat�
 - 32G 显存：5090 · 4090 48G 魔改
 - 96G 显存：RTX PRO 6000
 
-欢迎各配置的用户发送实测时间 / 软件 bug：
+如遇到软件 bug，请及时反馈：
 
 - 邮箱：[517298997@qq.com](mailto:517298997@qq.com)
 - QQ：19744249（添加请备注来源）
@@ -121,14 +121,14 @@ python3 serve.py                # 启动（或双击 start.command / start.bat�
 
 没有好显卡、或不想下载几个 GB 的模型？在**云端模型**页配上云端 API，画布的输出节点就能直接调云端出图，和本地工作流混用：
 
-1. **首次启动自动铺好 8 个主流预设**（接口地址、模型名、调用形态都配好了，只差你填 API Key）：
-   - OpenAI：GPT Image 1 / DALL·E 3
-   - 智谱：CogView-4
-   - 阿里云：通义万相 2.5（DashScope 异步任务，自动轮询）
-   - 火山引擎（即梦）：Seedream 4.0
-   - Google：Imagen 4
-   - Black Forest Labs：FLUX 1.1 Pro
-   - SiliconFlow：Kolors
+1. **首次启动自动铺好主流厂商预设**（接口地址、模型名、调用形态都配好了，只差你填 API Key，2026.11 阵容）：
+   - OpenAI：GPT-Image 2.5（Sunburst / Flare）
+   - 智谱：GLM-Image
+   - 阿里云：Wan2.7-Image Pro（通义万相，生成与编辑）
+   - 火山引擎（即梦）：Seedream 5.0 Pro / Flash
+   - Google：Nano Banana 2.1（Gemini，支持参考图编辑）
+   - Black Forest Labs：FLUX 3 Image Klein（另有 FLUX.2 Pro）
+   - SiliconFlow：Kolors 2.1
 2. 点卡片「编辑」填上 Key（只存本机），「测试连接」验一下配置。
 3. **调用形态**：绝大多数中转站走 `images`（`/v1/images/generations`）；少数把生图模型包成对话接口的走 `chat`（从回复里抠图片链接）。不确定就先试 `images`，报「返回里没有图片链接」再换 `chat`。**中转站**：点「添加模型」→ 选「OpenAI 兼容（中转站）」预设，填中转站地址（带 `/v1`）、Key 和它要求的模型名。
 4. **画布 → 输出节点 → 点中间那行**，绑定出图方式改成云端模型，写提示词点「生成」即可；结果照常入图库、自动关联模型。

@@ -4,6 +4,14 @@
 
 ## [未发布]
 
+### 变更（云端预置更新到 2026.11 阵容 / 设置页精简）
+
+- 云端模型预置换新（预置清单版本 v2，老库自动换卡）：OpenAI GPT-Image 2.5（Sunburst/Flare）、
+  智谱 GLM-Image、阿里 Wan2.7-Image Pro、火山 Seedream 5.0 Pro（4.x 官方即将下线）、
+  Google Nano Banana 2.1（走 Gemini OpenAI 兼容层）、BFL FLUX 3 Image Klein、SiliconFlow Kolors 2.1
+- chat 形态兼容多段 content（视觉模型把图片放在 image_url 段的情况）
+- 设置页移除硬件配置表（保留在 README），联系方式改为 bug 反馈一句话
+
 > 版本号自 v0.1.0 重新起算（此前 2.x 为内部迭代号，不算正式版）；
 > 0.x 阶段的 GitHub Release 一律标记为 pre-release。
 

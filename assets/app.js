@@ -1423,11 +1423,23 @@ window.Vault = (function () {
        不再单独入库），预置主流云端模型（只差用户填 Key）
      · 用户删掉的预置卡不复活（autoModelDismissed 记 id）
      ============================================================ */
+  // 预置清单版本：厂商出新模型时 +1，老库的预置卡就会自动换新
+  const CLOUD_PRESET_VER = 2;
+
   async function migrateModelsToCloud() {
     const st = await DB.getSettings().catch(() => ({}));
-    if (st.modelsCloudOnly) return;
-    for (const m of state.models.slice()) await DB.del('models', m.id);
+    if (!st.modelsCloudOnly) {
+      // 一次性迁移：本地基座 / 旧种子不再入库，页面只留云端模型
+      for (const m of state.models.slice()) await DB.del('models', m.id);
+      await DB.setSetting('modelsCloudOnly', true);
+    }
+    const ver = st.cloudPresetVersion || 0;
+    if (ver >= CLOUD_PRESET_VER && state.models.length) return;
+    // 预置升级：替换内置云卡（用户自建的和明确删掉的不动）
     const dismissed = new Set(st.autoModelDismissed || []);
+    for (const m of state.models.filter(m => m.id.startsWith('cloud-') && m.builtin)) {
+      await DB.del('models', m.id);
+    }
     let added = 0;
     for (const p of (window.Cloud ? Cloud.CLOUD_PRESETS : [])) {
       if (p.key === 'relay') continue;          // 中转站要用户自己填地址，不预置空卡
@@ -1443,7 +1455,7 @@ window.Vault = (function () {
       });
       added++;
     }
-    await DB.setSetting('modelsCloudOnly', true);
+    await DB.setSetting('cloudPresetVersion', CLOUD_PRESET_VER);
     await reload();
     if (added) renderNav();
   }
