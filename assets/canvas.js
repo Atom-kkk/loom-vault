@@ -291,7 +291,7 @@ window.Canvas = (function () {
           <div class="cv-hud-sep"></div>
           <button class="cv-tool" data-cv="fit" title="适应窗口">${V.icon('search', 15)}</button>
           <button class="cv-tool" data-cv="reset" title="100%">${V.icon('back', 15)}</button>
-          <button class="cv-zoom" id="cv-zoom" data-cv="zoom100" title="回到 100%（点一下）">100%</button>
+          <button class="cv-zoom" id="cv-zoom" data-cv="zoommenu" title="缩放比例：点一下输入任意值（20%–240%）">100%</button>
         </div>
         <div class="cv-map" id="cv-map" title="小地图：点一下跳过去">
           <canvas id="cv-map-cv" width="200" height="140"></canvas>
@@ -1603,6 +1603,7 @@ window.Canvas = (function () {
           <button class="chip active" data-src="vault">我的图库</button>
           <button class="chip" data-src="outfits">服饰参考</button>
           <button class="chip" data-src="faces">人脸参考</button>
+          <button class="chip" data-src="poses">姿势参考</button>
           <button class="chip" data-src="file">本地文件</button>
         </div>
         <div id="pick-body"></div>`,
@@ -1662,7 +1663,7 @@ window.Canvas = (function () {
           }
           // 参考库
           const src = window.REF_DATA?.[mode]?.items || [];
-          body.innerHTML = `<div class="ref-grid ${mode === 'faces' ? 'tall' : ''}" style="max-height:52vh;overflow:auto">
+          body.innerHTML = `<div class="ref-grid ${mode === 'faces' || mode === 'poses' ? 'tall' : ''}" style="max-height:52vh;overflow:auto">
             ${src.slice(0, 120).map((it, i) => `<div class="ref-card" data-pickr="${i}"><img src="${esc(it.thumb)}" loading="lazy"></div>`).join('')}
           </div>`;
           body.querySelectorAll('[data-pickr]').forEach(el => {
@@ -3091,6 +3092,93 @@ window.Canvas = (function () {
   }
 
   /* ============================================================
+     缩放比例：点 HUD 上的百分比，弹小面板输入任意值
+     ============================================================ */
+  // 回到 100% 的快捷路径没有丢 —— 预设档里第一个就是它
+  const ZOOM_PRESETS = [50, 100, 150, 200];
+  let zoomPop = null;        // 复用同一个弹层，避免连点叠出好几个
+  let zoomOutside = null;    // 当前弹层的「点外面关闭」监听
+
+  function closeZoomMenu() {
+    if (zoomOutside) { document.removeEventListener('pointerdown', zoomOutside); zoomOutside = null; }
+    if (zoomPop) { zoomPop.remove(); zoomPop = null; }
+  }
+
+  /** 以视口中心为锚点设缩放（滚轮以光标为锚，输入框没有光标位置） */
+  function setZoomAtCenter(pct) {
+    const k = Math.min(MAX_K, Math.max(MIN_K, pct / 100));
+    const vp = host.querySelector('#cv-viewport');
+    const rect = vp.getBoundingClientRect();
+    const k0 = cv.view.k || 1;
+    const mx = rect.width / 2, my = rect.height / 2;
+    cv.view.x = mx - (mx - cv.view.x) * (k / k0);
+    cv.view.y = my - (my - cv.view.y) * (k / k0);
+    cv.view.k = k;
+    applyTransform();
+    queueSave();
+  }
+
+  function zoomMenu(btn) {
+    if (zoomPop) { closeZoomMenu(); return; }   // 开着再点一下 = 关掉
+    const rect = btn.getBoundingClientRect();
+    zoomPop = document.createElement('div');
+    zoomPop.className = 'cv-zoom-pop';
+    zoomPop.innerHTML = `
+      <div class="cv-zoom-row">
+        <input type="number" id="cv-zoom-in" min="${Math.round(MIN_K * 100)}" max="${Math.round(MAX_K * 100)}" step="10"
+               value="${Math.round((cv.view.k || 1) * 100)}">
+        <span class="cv-zoom-pct">%</span>
+      </div>
+      <div class="cv-zoom-presets">
+        ${ZOOM_PRESETS.map(p => `<button type="button" data-zp="${p}">${p}%</button>`).join('')}
+        <button type="button" data-zf title="缩放到正好装下所有节点">适应</button>
+      </div>
+      <div class="cv-zoom-hint">范围 ${Math.round(MIN_K * 100)}–${Math.round(MAX_K * 100)}%，回车应用 · Esc 取消</div>`;
+    document.body.appendChild(zoomPop);
+
+    // 定位：锚在按钮正上方，左右不出窗口（先渲染再量，才能拿得到真实尺寸）
+    const pw = zoomPop.offsetWidth, ph = zoomPop.offsetHeight;
+    let x = rect.left + rect.width / 2 - pw / 2;
+    x = Math.max(10, Math.min(x, window.innerWidth - pw - 10));
+    zoomPop.style.left = x + 'px';
+    zoomPop.style.top = Math.max(10, rect.top - ph - 10) + 'px';
+
+    const inp = zoomPop.querySelector('#cv-zoom-in');
+    const apply = () => {
+      const v = Number(inp.value);
+      if (!Number.isFinite(v) || v <= 0) { closeZoomMenu(); return; }
+      if (v < MIN_K * 100 || v > MAX_K * 100) {
+        // 超范围不关面板：把值钳到边界，让用户看清实际会生效的数
+        inp.value = Math.round(Math.min(MAX_K, Math.max(MIN_K, v / 100)) * 100);
+        inp.select();
+        return;
+      }
+      setZoomAtCenter(v);
+      closeZoomMenu();
+    };
+
+    inp.focus(); inp.select();
+    inp.addEventListener('keydown', e => {
+      e.stopPropagation();                       // 别触发画布的 Delete / Esc 快捷键
+      if (e.key === 'Enter') apply();
+      if (e.key === 'Escape') closeZoomMenu();
+    });
+    inp.addEventListener('wheel', e => e.stopPropagation());
+    zoomPop.querySelectorAll('[data-zp]').forEach(b => {
+      b.onclick = () => { setZoomAtCenter(Number(b.dataset.zp)); closeZoomMenu(); };
+    });
+    zoomPop.querySelector('[data-zf]').onclick = () => { fitView(); closeZoomMenu(); };
+
+    // 点面板外面就收起（下一帧再挂，别把打开弹层的这次按下当成「外面」）
+    zoomOutside = e => {
+      if (!zoomPop) return;
+      if (zoomPop.contains(e.target) || btn.contains(e.target)) return;
+      closeZoomMenu();
+    };
+    setTimeout(() => document.addEventListener('pointerdown', zoomOutside), 0);
+  }
+
+  /* ============================================================
      全局动作
      ============================================================ */
   document.addEventListener('click', e => {
@@ -3103,11 +3191,7 @@ window.Canvas = (function () {
       applyTransform();
     }
     if (a === 'exit') V.go('gallery');
-    if (a === 'zoom100') {
-      cv.view.k = 1;
-      applyTransform();
-      queueSave();
-    }
+    if (a === 'zoommenu') zoomMenu(t);
     if (a === 'undo') undo();
     if (a === 'redo') redo();
     if (a === 'import-wf') importWorkflow();
