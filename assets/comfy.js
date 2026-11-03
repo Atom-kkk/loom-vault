@@ -124,14 +124,56 @@ window.Comfy = (function () {
     return engineCall('/status', {});
   }
 
-  /** 确保本地 ComfyUI 在跑：探活，没跑就静默拉起。返回状态对象。 */
+  /**
+   * serve.py 在不在。
+   * 判断依据：/engine/status 正常时会返回 running: boolean。
+   * 纯静态托管（GitHub Pages / Vercel）下这个地址是 404/501，engineCall 拿到的
+   * 是 {}，没有 running 字段 —— 据此区分「后端在跑但引擎没起」和「根本没有后端」。
+   */
+  let backendOk = null;
+  async function hasBackend(force = false) {
+    if (backendOk != null && !force) return backendOk;
+    try {
+      const st = await engineStatus();
+      backendOk = typeof st.running === 'boolean';
+    } catch {
+      backendOk = false;
+    }
+    return backendOk;
+  }
+
+  /**
+   * 确保能出图：优先让 serve.py 拉起引擎；没有 serve.py 时退而直连本机 ComfyUI。
+   *
+   * 这一步以前是硬依赖 serve.py 的：页面托管在别处（在线体验）时，
+   * 哪怕用户本机 ComfyUI 好端端开着，也会被「本地引擎启动失败」挡掉。
+   */
   async function ensureEngine(onStatus = () => { }) {
-    let st;
-    try { st = await engineStatus(); } catch { st = { running: false }; }
+    // 注意别用 { running: false } 当兜底 —— 那看起来跟「后端在跑、引擎没起」
+    // 一模一样，会走错分支。拿不到就是 null。
+    let st = null;
+    try { st = await engineStatus(); } catch { st = null; }
+    const hasSrv = !!st && typeof st.running === 'boolean';
+    const cur = hasSrv ? st : { running: false };
+    backendOk = hasSrv;
 
     // 已经能直连（可能是用户自己开的 ComfyUI），直接复用
-    if (st.running) {
-      try { await ping(); return { ...st, alreadyUp: true }; } catch { /* 端口开着但还没就绪，继续 ensure */ }
+    if (hasSrv && cur.running) {
+      try { await ping(); return { ...cur, alreadyUp: true }; } catch { /* 端口开着但还没就绪，继续往下走 */ }
+    }
+
+    // 没有 serve.py，或者后端说引擎没跑：先直接探一下 ComfyUI 的地址
+    const direct = await ping().then(() => true).catch(() => false);
+    if (direct) {
+      return { running: true, alreadyUp: true, external: !hasSrv, port: Number((base().split(':').pop() || 8188)) };
+    }
+
+    if (!hasSrv) {
+      throw new Error(
+        '这个页面没有连到本地服务（serve.py）。\n' +
+        '出图需要本机先跑 ComfyUI：用 start.command 启动 Loom，' +
+        '或在「本地配置」里把地址填成你 ComfyUI 的地址（默认 http://127.0.0.1:8188）。'
+      );
     }
 
     onStatus('正在启动本地引擎（首次较慢）…');
@@ -1233,7 +1275,7 @@ window.Comfy = (function () {
     analyzeApi, applyInputs, extractImages, cancelAll, waitFor,
     parseSlots, slotSummary, slotVocabulary: () => Object.keys(SLOT_SPEC), capLabel: (c) => CAP_LABEL[c] || c,
     withFreshSeeds, stripPluginSeeds,
-    ensureEngine, engineStatus, setEngineConfig, setEnginePaths, listDir,
+    ensureEngine, engineStatus, hasBackend, setEngineConfig, setEnginePaths, listDir,
     engineSys, freeMemory,
     durKey, durRecord, durAvg, durLast, fmtClock, fmtLoose, fmtBytes, etaText,
     scanModels, restartEngine, outputs,

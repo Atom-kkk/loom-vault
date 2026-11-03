@@ -932,16 +932,28 @@
       let scan = { found: {}, files: {}, roots: [] };
       try { scan = (await Comfy.scanModels()) || scan; } catch { }
 
+      // 纯静态托管（在线体验）时没有 serve.py：安装 / 启动 / 扫描都用不了，
+      // 但「直连本机 ComfyUI 出图」照样可以，得说清楚，别让人以为整个页面坏了
+      const hasSrv = typeof cfg.running === 'boolean';
+
       c.innerHTML = `
         <div style="max-width:820px">
+          ${hasSrv ? '' : `<div class="page-note">
+            <b>这个页面没有连到本地服务（serve.py）</b>
+            <span>所以「安装 / 启动 / 重启引擎」「模型目录扫描」在这里用不了。图片库、画布、提示词都正常。
+            想出图的话：先在本机用 <code>start.command</code> 启动 Loom，或直接开 ComfyUI，
+            然后在下面把「服务地址」填成它的地址（默认 <code>127.0.0.1:8188</code>）—— 填对就能出图。</span>
+          </div>`}
           <div class="section" style="margin-top:0" id="sec-comfy">
             <div class="section-title">ComfyUI（本地出图引擎）<span></span></div>
             <p class="hint" style="margin:0 0 11px">
               画布的「输出」节点把提示词和参考图写进工作流，交给本地引擎执行。
-              引擎由 Loom 托管：<b>点「生成」时会自动拉起，不用你手动开 ComfyUI</b>。
+              ${hasSrv
+                ? `<b>引擎由 Loom 托管：点「生成」时会自动拉起，不用你手动开 ComfyUI。</b>`
+                : `这个页面连不上 serve.py，<b>没法替你启动引擎</b>：请先在本机把 ComfyUI 开起来，再填下面的地址。`}
             </p>
 
-            <div class="install-box" id="inst-box">
+            ${hasSrv ? `<div class="install-box" id="inst-box">
               <div class="install-top">
                 <div class="install-top-txt">
                   <b>还没有 ComfyUI？让 Loom 自己装</b>
@@ -976,12 +988,12 @@
                   <button class="btn sm ghost" data-act="engine-install-cancel" id="inst-cancel">终止</button>
                 </div>
               </div>
-            </div>
+            </div>` : ''}
 
             <div class="form-grid">
-              <div class="field"><label>引擎目录（ComfyUI 安装位置）</label>
+              ${hasSrv ? `<div class="field"><label>引擎目录（ComfyUI 安装位置）</label>
                 <input type="text" id="cf-dir" placeholder="~/ComfyUI 或 /path/to/ComfyUI" value="${esc(cfg.comfy_dir || '')}">
-                <span class="hint">填 ComfyUI 根目录（含 main.py 的那个）。找不到会尝试自动探测常见位置。</span></div>
+                <span class="hint">填 ComfyUI 根目录（含 main.py 的那个）。找不到会尝试自动探测常见位置。</span></div>` : ''}
               <div class="field"><label>端口</label>
                 <input type="text" id="cf-port" value="${esc(String(cfg.port || 8188))}" placeholder="8188"></div>
               <div class="field"><label>服务地址（一般不用改）</label>
@@ -989,16 +1001,16 @@
                 <span class="hint">只填主机和端口即可，自动补 http://</span></div>
               <div class="field"><label>&nbsp;</label>
                 <div style="display:flex;gap:8px;flex-wrap:wrap">
-                  <button class="btn primary" data-act="engine-start">${icon('spark', 14)} 启动引擎</button>
+                  ${hasSrv ? `<button class="btn primary" data-act="engine-start">${icon('spark', 14)} 启动引擎</button>` : ''}
                   <button class="btn" data-act="comfy-test">测试连接</button>
                   <button class="btn" data-act="comfy-save">保存地址</button>
-                  <button class="btn" data-act="engine-restart">重启引擎</button>
+                  ${hasSrv ? `<button class="btn" data-act="engine-restart">重启引擎</button>` : ''}
                 </div></div>
             </div>
             <div id="comfy-stat" style="margin-top:9px;font-size:11.5px;color:var(--text-3)"></div>
           </div>
 
-          <div class="section" id="sec-paths">
+          ${hasSrv ? `<div class="section" id="sec-paths">
             <div class="section-title">模型目录<span></span></div>
             <p class="hint" style="margin:0 0 11px">
               默认就用 ComfyUI 自己的 <code>models/</code> —— 那里放对了什么都不用改。
@@ -1015,13 +1027,16 @@
             </div>
             ${cfg.log_tail ? `<details style="margin-top:12px"><summary class="hint" style="cursor:pointer">最近启动日志</summary>
               <pre style="white-space:pre-wrap;font-size:11px;color:var(--text-3);max-height:220px;overflow:auto">${esc(cfg.log_tail)}</pre></details>` : ''}
-          </div>
+          </div>` : ''}
         </div>`;
 
       // 从别的页面切回来时，把还在跑的安装任务接上（进度、日志继续刷）
       try {
         const ist = await Comfy.installStatus();
-        if (ist && (ist.running || ist.ok !== null || ist.error)) {
+        // 没有 serve.py 时拿到的是 {}：running 不是布尔、steps 为空。
+        // 以前只判 ist.ok !== null，undefined 也算「有状态」，结果画出一个空面板。
+        const real = ist && typeof ist.running === 'boolean' && Array.isArray(ist.steps);
+        if (real && (ist.running || ist.ok !== null || ist.error)) {
           renderInstall(ist);
           if (ist.running) instStartPoll(); else instStopPoll();
         }

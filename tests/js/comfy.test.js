@@ -552,3 +552,22 @@ describe('imageSlots', () => {
     assert.equal(comfy.parseSlots(api).imageSlots, 0);
   });
 });
+
+/* ============================================================
+   ensureEngine —— 没有 serve.py 时的降级
+   沙箱里的 fetch 一律抛错，正好模拟「纯静态托管」：
+   这时不该报「引擎启动失败」，而要说明白「这个页面没连本地服务」。
+   ============================================================ */
+describe('ensureEngine · 无本地服务', () => {
+  test('hasBackend 在请求不通时返回 false', async () => {
+    assert.equal(await comfy.hasBackend(true), false);
+  });
+
+  test('报错要指向 serve.py 和 ComfyUI 地址，而不是含糊的「启动失败」', async () => {
+    let msg = '';
+    try { await comfy.ensureEngine(); } catch (e) { msg = String(e.message); }
+    assert.match(msg, /serve\.py/);
+    assert.match(msg, /127\.0\.0\.1:8188/);
+    assert.ok(!/引擎启动失败/.test(msg), '不该报成启动失败：' + msg);
+  });
+});
