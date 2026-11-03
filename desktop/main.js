@@ -54,6 +54,20 @@ function copyDir(src, dst) {
   }
 }
 
+/** 网页资源指纹：文件数 + 总字节数。staging 有任何变动都会变，防止「版本号没 bump 就用旧前端」 */
+function webFingerprint(dir) {
+  let n = 0, size = 0;
+  const walk = (d) => {
+    for (const ent of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, ent.name);
+      if (ent.isDirectory()) walk(p);
+      else { n++; size += fs.statSync(p).size; }
+    }
+  };
+  try { walk(dir); } catch { }
+  return `${n}:${size}`;
+}
+
 /** 首次启动 / 升级后把网页资源同步到用户目录。返回 web 目录。 */
 function prepareWeb() {
   const dst = webDir();
@@ -61,8 +75,11 @@ function prepareWeb() {
 
   const src = path.join(process.resourcesPath, 'web');
   const stamp = path.join(dst, '.version');
-  const want = app.getVersion();
-  if (fs.existsSync(stamp) && fs.readFileSync(stamp, 'utf8').trim() === want) return dst;
+  // 指纹 = 版本号 + 资源内容摘要：改了网页即使没 bump 版本也会刷新
+  const want = app.getVersion() + ' · ' + webFingerprint(src);
+  let cur = '';
+  try { cur = fs.readFileSync(stamp, 'utf8').trim(); } catch { }
+  if (cur === want) return dst;
 
   copyDir(src, dst);
   fs.writeFileSync(stamp, want);
