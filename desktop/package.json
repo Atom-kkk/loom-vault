@@ -59,6 +59,7 @@
         "nsis",
         "zip"
       ],
+      "artifactName": "Loom-${version}-win64.${ext}",
       "icon": "build/icon.png",
       "extraResources": [
         {
