@@ -4,6 +4,31 @@
 
 ## [未发布]
 
+### 新增（资源监控 / 预计时间）
+
+- **顶栏资源徽章**：右侧常驻一枚胶囊，实时显示「运行中 1（排队 3）· 显存 94%」；引擎没起时显示「引擎未启动」。点击展开面板，点外部或按 `Esc` 收起
+- **资源面板**：
+  - 任务队列：运行中 / 排队中数量、本任务已用时间
+  - 显卡：型号、GPU 负载（`nvidia-smi`，没有就显示 `—`）、显存占用条（≥80% 转黄、≥92% 转红）、`15 GB / 16 GB`
+  - 系统内存：RAM 占用条与用量、CPU 占用与核数
+  - 版本：ComfyUI / PyTorch 版本、引擎进程内存与运行时长
+  - 「卸载模型并释放显存」：`POST /free`（`unload_models` + `free_memory`），按钮自带「正在释放 / 已释放」反馈
+- **新增接口 `/engine/sys`**：由 `serve.py` 采集 ComfyUI 自己不会说的部分 —— CPU 占用、引擎进程 RSS 与运行时长、NVIDIA 利用率
+  - `ps` 被系统策略挡住时退回 `os.getloadavg()` 估算；Windows 走 PowerShell `Win32_Processor` / `Get-Process`
+  - 进程 pid 不盲信 `.engine.json`：优先取真正占着端口的那个，手动启动的 ComfyUI 也能测到
+  - 结果带 2 秒缓存（`ps` 约 30ms、PowerShell 800ms+，不能每次轮询都跑）
+- **生成节点的「已用 / 预计」**：状态行变成 `第 1/3 张 · 生成中 8/20 · 已用 00:07 · 剩余约 00:24`
+  - 有 WebSocket 步进进度 → 按每步秒数的指数滑动平均外推，批量会把后面未跑的张数算进去
+  - 没有进度（MPS / 单步长采样 / WS 连不上）→ 用同工作流 + 同批量的历史中位耗时倒推，超时显示「快好了」
+  - 历史存 `localStorage` 的 `vault.gen.dur`，每类保留最近 6 次；`etaText()` 是纯函数，可单测
+  - 计时器每秒只改状态行文字，不重建节点（保住输入焦点与滚动位置）；`gen` 字段不写进 IndexedDB，避免刷新后接着上次算「已用」
+- 面板打开 1.5 秒轮询、收起 8 秒、页面切后台暂停
+
+### 测试
+
+- `tests/py` 31 → 50 项：新增 `_parse_etime` 各格式、`_proc_usage`（POSIX / Windows / 进程已退出）、`_cpu_percent`（核数换算、夹紧 100、拿不到返回 None、loadavg 兜底）、`_gpu_util`、`sys()` 的 pid 归属与缓存
+- `tests/js` 24 → 44 项：新增 `fmtClock` / `fmtLoose` / `fmtBytes` / `durKey` / `durRecord` / `durAvg` / `durLast`，以及 `etaText` 的九种场景（无进度、按步外推、批量、历史倒推、超时不吐负数、时钟回拨）
+
 ### 新增（槽位协议 / 批量 / 遮罩 / 画布交互 / 测试）
 
 - **工作流槽位协议**：在 ComfyUI 里把节点标题（`_meta.title`）改成 `prompt` / `seed` / `ref_image_01` / `ref_mask` / `first_frame` 等保留名，织造所就按「槽位」认角色，不再靠节点类型 + id 顺序猜

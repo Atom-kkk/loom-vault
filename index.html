@@ -85,12 +85,14 @@
 <script src="assets/canvas.js"></script>
 <script src="assets/snippets.js"></script>
 <script src="assets/builtin.js"></script>
+<script src="assets/monitor.js"></script>
 <script src="assets/manage.js"></script>
 <script>
   if (window.Vault) {
     Vault.boot().then(() => {
       if (window.REF) REF.preload();
       if (window.SNIP) SNIP.preload();
+      if (window.SYS) SYS.init();
     });
   }
 </script>

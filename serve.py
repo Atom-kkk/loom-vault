@@ -521,6 +521,175 @@ class Engine:
             "log_tail": self._log_tail(),
         }
 
+    # ---------- 资源监控（/engine/sys） ----------
+    # ComfyUI 的 /system_stats 只报显存与版本；CPU、进程内存、NVIDIA 利用率都得
+    # 自己问系统。这些调用都不便宜（ps 约 30ms，PowerShell 800ms+），统一走 2 秒
+    # 缓存，前端 1.5 秒轮询一次也不会把机器拖住。
+    _sys_cache = {"t": 0.0, "data": None}
+
+    @staticmethod
+    def _cpu_percent():
+        """整机 CPU 占用百分比。拉不到就返回 None（界面显示 —— 而不是假装 0）。"""
+        cores = max(1, os.cpu_count() or 1)
+        try:
+            if Engine.IS_WIN:
+                out = Engine._powershell(
+                    "(Get-CimInstance Win32_Processor | "
+                    "Measure-Object -Property LoadPercentage -Average).Average", timeout=5)
+                if not out:
+                    raise ValueError('PowerShell 没返回')
+                v = float(out.strip().replace(",", "."))
+            else:
+                # ps 的 %cpu 是「相对单个核」的，多线程加起来会超过 100；
+                # 除以核数才是任务管理器里那个整机占用。
+                r = subprocess.run(["ps", "-A", "-o", "%cpu="], capture_output=True,
+                                   text=True, timeout=5)
+                body = (r.stdout or "").strip()
+                if r.returncode != 0 or not body:
+                    raise OSError('ps 没有输出')
+                total = 0.0
+                for tok in body.split():
+                    try:
+                        total += float(tok)
+                    except ValueError:
+                        pass
+                v = total / cores
+        except Exception:
+            # ps 被系统策略挡住时（沙箱 / 托管环境）退回 1 分钟平均负载。
+            # 精度差一点，也比让面板永远显示「—」强；Windows 上会抛
+            # NotImplementedError，自然落到 None。
+            try:
+                v = os.getloadavg()[0] / cores * 100
+            except Exception:
+                return None
+        return round(max(0.0, min(100.0, v)), 1)
+
+    @staticmethod
+    def _parse_etime(s):
+        """ps 的 etime 格式 → 秒：'05:20' / '13:02:11' / '2-03:04:05'。"""
+        s = str(s or "").strip()
+        if not s:
+            return None
+        days = 0
+        if "-" in s:
+            d, s = s.split("-", 1)
+            try:
+                days = int(d)
+            except ValueError:
+                return None
+        try:
+            nums = [int(float(x)) for x in s.split(":")]
+        except ValueError:
+            return None
+        if len(nums) == 3:
+            h, m, sec = nums
+        elif len(nums) == 2:
+            h, m, sec = 0, nums[0], nums[1]
+        elif len(nums) == 1:
+            h, m, sec = 0, 0, nums[0]
+        else:
+            return None
+        return days * 86400 + h * 3600 + m * 60 + sec
+
+    @staticmethod
+    def _proc_usage(pid):
+        """引擎进程的常驻内存（字节）与已运行秒数。拿不到返回 (None, None)。"""
+        try:
+            pid = int(pid)
+        except (TypeError, ValueError):
+            return None, None
+        if Engine.IS_WIN:
+            out = Engine._powershell(
+                "$p=Get-Process -Id %d -ErrorAction SilentlyContinue;"
+                "if($p){ \"{0}|{1}\" -f $p.WorkingSet64,"
+                "[int]((Get-Date)-$p.StartTime).TotalSeconds }" % pid, timeout=8)
+            if "|" not in out:
+                return None, None
+            rss, up = out.split("|", 1)
+            try:
+                return int(float(rss)), int(float(up))
+            except ValueError:
+                return None, None
+        try:
+            r = subprocess.run(["ps", "-o", "rss=,etime=", "-p", str(pid)],
+                               capture_output=True, text=True, timeout=5)
+            lines = (r.stdout or "").strip().splitlines()
+            if not lines:
+                return None, None
+            toks = lines[-1].split()
+            rss = int(toks[0]) * 1024           # ps 的 rss 单位是 KB
+            up = Engine._parse_etime(toks[1]) if len(toks) > 1 else None
+            return rss, up
+        except Exception:
+            return None, None
+
+    @staticmethod
+    def _gpu_util():
+        """NVIDIA 显卡利用率（0~100）。macOS / 纯 CPU 机器上没有 nvidia-smi，返回 None。"""
+        exe = shutil.which("nvidia-smi")
+        if not exe:
+            return None
+        try:
+            r = subprocess.run(
+                [exe, "--query-gpu=utilization.gpu,memory.used,memory.total",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=6,
+                **Engine._no_window_kwargs())
+            lines = (r.stdout or "").strip().splitlines()
+            if not lines:
+                return None
+            toks = [t.strip() for t in lines[0].split(",")]
+            out = {"util": float(toks[0])}
+            if len(toks) >= 3:
+                out["mem_used"] = int(float(toks[1])) * 1024 * 1024
+                out["mem_total"] = int(float(toks[2])) * 1024 * 1024
+            return out
+        except Exception:
+            return None
+
+    def sys(self):
+        """资源面板数据：引擎存活 / 端口 / pid / CPU / 进程内存 / GPU 利用率。
+
+        显存、RAM、版本号由前端另问 /system_stats（那边更准，也能直连）；
+        这里只补 ComfyUI 自己不会说的那部分。
+        """
+        now = time.time()
+        cache = Engine._sys_cache
+        if cache["data"] is not None and now - cache["t"] < 2.0:
+            return cache["data"]
+
+        cfg = self.cfg()
+        port = int(cfg.get("port", 8188))
+        running = self.port_open(port)
+
+        # 不盲信 .engine.json 里的 pid：用户手动起的 ComfyUI 也要能测到内存
+        pid = None
+        if running:
+            owners = sorted(self._port_pids(port))
+            try:
+                recorded = int(cfg.get("pid") or 0) or None
+            except (TypeError, ValueError):
+                recorded = None
+            if recorded and recorded in owners:
+                pid = recorded
+            elif owners:
+                pid = owners[0]
+            else:
+                pid = recorded
+
+        rss, uptime = self._proc_usage(pid) if pid else (None, None)
+        data = {
+            "running": running,
+            "port": port,
+            "pid": pid,
+            "cpu": {"pct": self._cpu_percent(), "cores": os.cpu_count() or 1},
+            "proc": {"rss": rss, "uptime": uptime},
+            "gpu": self._gpu_util(),
+            "ts": now,
+        }
+        cache["data"], cache["t"] = data, now
+        return data
+
     def _log_tail(self, n=40):
         p = os.path.join(ROOT, ".engine.log")
         try:
@@ -1510,6 +1679,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         if path == "/engine/scan-models":
             return self._engine_json(ENGINE.scan_models())
+
+        if path == "/engine/sys":
+            return self._engine_json(ENGINE.sys())
 
         if path == "/engine/listdir":
             return self._engine_json(ENGINE.listdir((body or {}).get("path", "~")))

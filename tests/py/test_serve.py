@@ -407,5 +407,177 @@ class TestInstallerContract(unittest.TestCase):
         self.assertEqual(serve.INSTALLER._torch_flavor('cpu'), 'cpu')
 
 
+# ============================================================
+# 资源监控（/engine/sys）
+# 这块数据全靠解析系统命令，格式一错界面就是一堆 None，
+# 所以解析器和「拿不到时的降级」都单独测。
+# ============================================================
+class TestParseEtime(unittest.TestCase):
+
+    def test_common_formats(self):
+        cases = {
+            '05:20':         320,
+            '13:02:11':      46931,
+            '2-03:04:05':    183845,
+            '1-00:00:00':    86400,
+            '00:00':         0,
+            ' 07:01 ':       421,
+            '90':            90,
+        }
+        for raw, want in cases.items():
+            self.assertEqual(serve.Engine._parse_etime(raw), want, raw)
+
+    def test_garbage_returns_none(self):
+        for raw in ('', '   ', 'garbage', '1:2:3:4', 'x-01:00:00'):
+            self.assertIsNone(serve.Engine._parse_etime(raw), repr(raw))
+
+
+class TestProcUsage(EngineFixture):
+
+    def test_posix_reads_rss_and_etime(self):
+        fake = mock.Mock(stdout='  834 13:02:11\n', returncode=0)
+        with mock.patch.object(serve.Engine, 'IS_WIN', False), \
+             mock.patch.object(serve.subprocess, 'run', return_value=fake) as run:
+            rss, up = serve.Engine._proc_usage(4321)
+        self.assertEqual(rss, 834 * 1024)      # ps 给的是 KB
+        self.assertEqual(up, 46931)
+        self.assertEqual(run.call_args[0][0][:3], ['ps', '-o', 'rss=,etime='])
+
+    def test_posix_process_gone(self):
+        fake = mock.Mock(stdout='', returncode=1)
+        with mock.patch.object(serve.Engine, 'IS_WIN', False), \
+             mock.patch.object(serve.subprocess, 'run', return_value=fake):
+            self.assertEqual(serve.Engine._proc_usage(999999), (None, None))
+
+    def test_windows_parses_powershell_payload(self):
+        with mock.patch.object(serve.Engine, 'IS_WIN', True), \
+             mock.patch.object(serve.Engine, '_powershell',
+                               return_value='874512384|46920'):
+            self.assertEqual(serve.Engine._proc_usage(77), (874512384, 46920))
+
+    def test_windows_no_output_is_none(self):
+        with mock.patch.object(serve.Engine, 'IS_WIN', True), \
+             mock.patch.object(serve.Engine, '_powershell', return_value=''):
+            self.assertEqual(serve.Engine._proc_usage(77), (None, None))
+
+    def test_bad_pid_is_none(self):
+        self.assertEqual(serve.Engine._proc_usage(None), (None, None))
+        self.assertEqual(serve.Engine._proc_usage('abc'), (None, None))
+
+
+class TestCpuPercent(EngineFixture):
+
+    def test_posix_divides_by_cores(self):
+        fake = mock.Mock(stdout='12.0\n8.0\n4.0\n', returncode=0)
+        with mock.patch.object(serve.Engine, 'IS_WIN', False), \
+             mock.patch.object(serve.subprocess, 'run', return_value=fake), \
+             mock.patch.object(serve.os, 'cpu_count', return_value=4):
+            self.assertAlmostEqual(serve.Engine._cpu_percent(), 6.0)
+
+    def test_clamped_to_100(self):
+        fake = mock.Mock(stdout='900.0\n', returncode=0)
+        with mock.patch.object(serve.Engine, 'IS_WIN', False), \
+             mock.patch.object(serve.subprocess, 'run', return_value=fake), \
+             mock.patch.object(serve.os, 'cpu_count', return_value=2):
+            self.assertEqual(serve.Engine._cpu_percent(), 100.0)
+
+    def test_failure_returns_none_not_zero(self):
+        # 关键：拿不到就说「不知道」（界面显示 —），别假装占用 0% 骗人
+        with mock.patch.object(serve.Engine, 'IS_WIN', False), \
+             mock.patch.object(serve.subprocess, 'run', side_effect=OSError), \
+             mock.patch.object(serve.os, 'getloadavg', side_effect=OSError):
+            self.assertIsNone(serve.Engine._cpu_percent())
+
+    def test_falls_back_to_loadavg_when_ps_blocked(self):
+        # 沙箱 / 托管环境里 ps 会被系统策略挡住，这时用 1 分钟平均负载兜底
+        with mock.patch.object(serve.Engine, 'IS_WIN', False), \
+             mock.patch.object(serve.subprocess, 'run', side_effect=PermissionError), \
+             mock.patch.object(serve.os, 'getloadavg', return_value=(2.0, 1.8, 1.5)), \
+             mock.patch.object(serve.os, 'cpu_count', return_value=4):
+            self.assertEqual(serve.Engine._cpu_percent(), 50.0)
+
+    def test_empty_ps_output_also_falls_back(self):
+        fake = mock.Mock(stdout='  \n', returncode=0)
+        with mock.patch.object(serve.Engine, 'IS_WIN', False), \
+             mock.patch.object(serve.subprocess, 'run', return_value=fake), \
+             mock.patch.object(serve.os, 'getloadavg', return_value=(1.0, 1.0, 1.0)), \
+             mock.patch.object(serve.os, 'cpu_count', return_value=2):
+            self.assertEqual(serve.Engine._cpu_percent(), 50.0)
+
+    def test_windows_average(self):
+        with mock.patch.object(serve.Engine, 'IS_WIN', True), \
+             mock.patch.object(serve.Engine, '_powershell', return_value='17'):
+            self.assertEqual(serve.Engine._cpu_percent(), 17.0)
+
+
+class TestGpuUtil(EngineFixture):
+
+    def test_no_nvidia_smi(self):
+        with mock.patch.object(serve.shutil, 'which', return_value=None):
+            self.assertIsNone(serve.Engine._gpu_util())
+
+    def test_query_parsed(self):
+        fake = mock.Mock(stdout='93, 15360, 16376\n', returncode=0)
+        with mock.patch.object(serve.shutil, 'which', return_value='/usr/bin/nvidia-smi'), \
+             mock.patch.object(serve.subprocess, 'run', return_value=fake):
+            g = serve.Engine._gpu_util()
+        self.assertEqual(g['util'], 93.0)
+        self.assertEqual(g['mem_total'], 16376 * 1024 * 1024)
+
+
+class TestSysPayload(EngineFixture):
+
+    def setUp(self):
+        super().setUp()
+        serve.Engine._sys_cache = {"t": 0.0, "data": None}   # 缓存是类变量，用例间必须清
+
+    def test_stopped_engine_still_returns_shape(self):
+        with mock.patch.object(serve.Engine, 'port_open', return_value=False), \
+             mock.patch.object(serve.Engine, '_cpu_percent', return_value=5.0), \
+             mock.patch.object(serve.Engine, '_gpu_util', return_value=None):
+            d = self.engine.sys()
+        self.assertFalse(d['running'])
+        self.assertIsNone(d['pid'])
+        self.assertEqual(d['cpu']['pct'], 5.0)
+        self.assertGreaterEqual(d['cpu']['cores'], 1)
+        self.assertEqual(set(d['proc']), {'rss', 'uptime'})
+        self.assertIn('ts', d)
+
+    def test_running_prefers_recorded_pid_that_owns_port(self):
+        self.engine._state = {'port': 8188, 'pid': 4321}
+        with mock.patch.object(serve.Engine, 'port_open', return_value=True), \
+             mock.patch.object(serve.Engine, '_port_pids', return_value={4321, 9999}), \
+             mock.patch.object(serve.Engine, '_proc_usage', return_value=(512, 60)) as usage, \
+             mock.patch.object(serve.Engine, '_cpu_percent', return_value=1.0):
+            d = self.engine.sys()
+        self.assertTrue(d['running'])
+        self.assertEqual(d['pid'], 4321)
+        self.assertEqual(d['proc']['rss'], 512)
+        usage.assert_called_once_with(4321)
+
+    def test_running_falls_back_to_port_owner(self):
+        # 用户手动起的 ComfyUI：.engine.json 里没 pid，但端口上确实有进程
+        self.engine._state = {'port': 8188, 'pid': None}
+        with mock.patch.object(serve.Engine, 'port_open', return_value=True), \
+             mock.patch.object(serve.Engine, '_port_pids', return_value={7777}), \
+             mock.patch.object(serve.Engine, '_proc_usage', return_value=(1, 2)), \
+             mock.patch.object(serve.Engine, '_cpu_percent', return_value=1.0):
+            self.assertEqual(self.engine.sys()['pid'], 7777)
+
+    def test_cached_within_window(self):
+        calls = []
+
+        def fake_open(port):
+            calls.append(port)
+            return False
+
+        with mock.patch.object(serve.Engine, 'port_open', side_effect=fake_open), \
+             mock.patch.object(serve.Engine, '_cpu_percent', return_value=0.0):
+            a = self.engine.sys()
+            b = self.engine.sys()
+        self.assertIs(a, b)          # 2 秒内直接复用，不重复探活
+        self.assertEqual(len(calls), 1)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

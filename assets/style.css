@@ -923,6 +923,10 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
 .cv-gen-status {
   padding: 0 11px 8px;
   font-size: 11.5px; color: var(--text-2);
+  line-height: 1.5;
+  /* 「已用 00:07」每秒都在变，等宽数字能避免整行左右抖动 */
+  font-variant-numeric: tabular-nums;
+  word-break: break-word;
 }
 .cv-gen-status.error { color: var(--danger); }
 .cv-gen-status.done { color: var(--ok); }
@@ -2084,3 +2088,159 @@ html[data-theme="light"] #lightbox { background: rgba(246, 243, 238, .97); }
 /* 张数行：窄节点时换行，别把固定种子挤出去 */
 .cv-batch { flex-wrap: wrap; row-gap: 4px; }
 .cv-seedfix { flex: 0 0 auto; }
+
+/* ============================================================
+   资源监控（顶栏徽章 + 展开面板）
+   ============================================================ */
+.sys-badge {
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 30px; padding: 0 12px 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--bg-elev);
+  color: var(--text-2);
+  font: inherit; font-size: 12px; line-height: 1;
+  cursor: pointer; white-space: nowrap; max-width: 260px;
+  transition: border-color .18s var(--ease), color .18s var(--ease), background .18s var(--ease);
+}
+.sys-badge:hover { color: var(--text); border-color: var(--text-3); }
+.sys-badge.active { color: var(--text); border-color: var(--text-3); background: var(--panel-2); }
+.sys-badge-text { overflow: hidden; text-overflow: ellipsis; }
+
+.sys-badge .dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--text-3); flex: 0 0 auto;
+  transition: background .2s var(--ease);
+}
+.sys-badge.on .dot { background: var(--ok); }
+.sys-badge.on.busy .dot {
+  background: var(--rose);
+  animation: sysPulse 1.9s var(--ease) infinite;
+}
+@keyframes sysPulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--rose-soft); }
+  50% { box-shadow: 0 0 0 4px transparent; }
+}
+
+/* ---------- 面板 ---------- */
+.sys-panel {
+  position: fixed; top: 68px; right: 24px; z-index: 70;
+  width: 338px; max-height: calc(100vh - 100px); overflow-y: auto;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  animation: sysIn .16s var(--ease);
+}
+.sys-panel[hidden] { display: none; }
+@keyframes sysIn {
+  from { opacity: 0; transform: translateY(-6px) scale(.98); }
+  to { opacity: 1; transform: none; }
+}
+
+.sys-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 4px 6px;
+}
+.sys-head b { font-size: 13px; font-weight: 600; letter-spacing: .01em; }
+.sys-head .sys-state {
+  font-size: 11px; color: var(--text-3);
+  padding: 1px 7px; border-radius: 99px; background: var(--accent-soft);
+}
+.sys-head .sys-ico {
+  margin-left: auto;
+  width: 26px; height: 26px; padding: 0;
+  display: inline-grid; place-items: center;
+  border: 1px solid transparent; border-radius: 8px;
+  background: transparent; color: var(--text-3); cursor: pointer;
+}
+.sys-head .sys-ico:hover { color: var(--text); background: var(--accent-soft); }
+.sys-head .sys-ico svg { width: 15px; height: 15px; }
+
+.sys-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--text-3); flex: 0 0 auto;
+}
+.sys-dot.on { background: var(--ok); }
+.sys-dot.warn { background: var(--warn); }
+
+.sys-card {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 11px 12px;
+  display: flex; flex-direction: column; gap: 7px;
+}
+.sys-card.flat { gap: 6px; }
+
+.sys-card-title {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12px; font-weight: 600; color: var(--text);
+}
+.sys-card-title svg { width: 14px; height: 14px; color: var(--text-3); flex: 0 0 auto; }
+.sys-card-title-gpu span:nth-child(2) {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sys-card-title .sys-side { margin-left: auto; font-weight: 400; font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
+
+.sys-tag {
+  margin-left: auto;
+  font-size: 11px; font-weight: 400;
+  padding: 1px 8px; border-radius: 99px;
+  background: var(--accent-soft); color: var(--text-3);
+}
+.sys-tag.on { background: var(--rose-soft); color: var(--rose-ink); }
+
+.sys-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+.sys-kv {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  font-size: 12px; color: var(--text-2);
+}
+.sys-kv b {
+  font-family: var(--mono); font-size: 12px; font-weight: 500;
+  color: var(--text); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 190px;
+}
+.sys-grid2 .sys-kv { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; }
+.sys-grid2 .sys-kv b { font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+
+.sys-row {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 12px; color: var(--text-2);
+}
+.sys-row b { font-family: var(--mono); font-size: 11.5px; color: var(--text); font-weight: 500; }
+
+.sys-bar {
+  height: 6px; border-radius: 99px;
+  background: var(--panel-3); overflow: hidden;
+}
+.sys-bar > i {
+  display: block; height: 100%; width: 0;
+  border-radius: 99px; background: var(--text-3);
+  transition: width .45s var(--ease), background .3s var(--ease);
+}
+.sys-bar.hot > i { background: var(--warn); }
+.sys-bar.crit > i { background: var(--danger); }
+
+.sys-sub { font-size: 11.5px; color: var(--text-3); font-family: var(--mono); }
+.sys-card .sys-sub:last-child { margin-top: -2px; }
+
+.sys-free {
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  height: 36px; margin-top: 2px;
+  border: 1px solid var(--line-strong); border-radius: 11px;
+  background: var(--panel-2); color: var(--text);
+  font: inherit; font-size: 12.5px; cursor: pointer;
+  transition: border-color .18s var(--ease), background .18s var(--ease);
+}
+.sys-free:hover:not(:disabled) { border-color: var(--text-3); background: var(--panel-3); }
+.sys-free:disabled { opacity: .45; cursor: not-allowed; }
+.sys-free svg { width: 15px; height: 15px; color: var(--text-2); }
+
+@media (max-width: 640px) {
+  .sys-panel { right: 10px; left: 10px; width: auto; top: 60px; }
+  .sys-badge { max-width: 150px; }
+}

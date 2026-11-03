@@ -244,6 +244,8 @@ window.Vault = (function () {
       ? `<button class="btn primary" data-act="upload">${icon('upload', 15)} 上传图片</button>`
       : '';
     $('#topbar-actions').innerHTML = uploadBtn + acts;
+    // 资源监控徽章常驻在顶栏最右：render 会重写 innerHTML，这里把它重新挂回去
+    if (window.SYS) SYS.mountBadge();
     const container = $('#view');
     container.className = '';
     container.innerHTML = '';

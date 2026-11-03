@@ -50,7 +50,9 @@ window.Canvas = (function () {
   async function persist() {
     if (!cv) return;
     cv.updatedAt = Date.now();
-    await DB.put('canvases', JSON.parse(JSON.stringify(cv)));
+    // gen 是运行期计时器（t0 / 速率采样），存进库下次打开会接着旧时间算「已用」
+    const plain = JSON.parse(JSON.stringify(cv, (k, v) => (k === 'gen' ? undefined : v)));
+    await DB.put('canvases', plain);
     const i = list.findIndex(c => c.id === cv.id);
     if (i >= 0) list[i] = cv; else list.unshift(cv);
   }
@@ -1529,13 +1531,81 @@ window.Canvas = (function () {
   /** 统一的节点状态更新（runGen 与「接回任务」共用） */
   function nodeStatus(n, text, st = 'running', step, total) {
     n.data.status = st;
-    n.data.statusText = text;
     if (step != null && total) n.data.prog = { step, total };
     if (st !== 'running') n.data.prog = null;
+
+    const g = n.data.gen;
+    if (g && st === 'running') {
+      g.base = text;
+      if (step != null && total) {
+        if (!g.total || g.total !== total) g.per = 0;   // 换了阶段，速率重新采
+        g.step = step;
+        g.total = total;
+        const el = (Date.now() - (g.curT0 || g.t0)) / 1000;
+        if (el > 0.2 && step > 0) {
+          const sample = el / step;
+          g.per = g.per > 0 ? g.per * 0.7 + sample * 0.3 : sample;
+        }
+      }
+      n.data.statusText = text + ' · ' + genTiming(n);
+    } else {
+      if (g) genEnd(n);        // 结束/出错/取消：计时器收工
+      n.data.statusText = text;
+    }
+
     const el = world.querySelector(`.cv-node[data-id="${n.id}"]`);
     if (el) el.replaceWith(makeNodeEl(n));
     const fresh = world.querySelector(`.cv-node[data-id="${n.id}"]`);
     if (fresh) bindNodeEvents(fresh, n);
+  }
+
+  /* ============================================================
+     生成计时：已用时间 / 预计剩余
+     ============================================================ */
+  // t0 记整批开始，curT0 记当前这一张开始；per 是「每步秒数」的指数滑动平均，
+  // 有 WS 进度时按它外推剩余；没有进度（MPS / 单步长采样）就退回同工作流的历史中位耗时。
+  function genStart(n, wfId, batchTotal) {
+    const bt = Math.max(1, Number(batchTotal) || 1);
+    const key = Comfy.durKey(wfId, bt);
+    n.data.gen = {
+      t0: Date.now(), curT0: Date.now(), key: key,
+      batchTotal: bt, batchIdx: 0,
+      step: 0, total: 0, per: 0,
+      hist: Comfy.durAvg(key), base: ''
+    };
+    startGenTicker();
+  }
+
+  function genEnd(n) {
+    if (n.data) n.data.gen = null;
+  }
+
+  /** 返回给状态行尾部的「已用 01:12 · 剩余约 03:05」（算法在 Comfy.etaText，可单测） */
+  function genTiming(n, now) {
+    return n.data && n.data.gen ? Comfy.etaText(n.data.gen, now) : '';
+  }
+
+  // 每秒只改状态行那一行字，不重建节点 —— 重建会把画布输入焦点和滚轮位置弄丢。
+  let genTimer = 0;
+  function startGenTicker() {
+    if (genTimer) return;
+    genTimer = setInterval(() => {
+      const now = Date.now();
+      let alive = false;
+      // 切走视图后 world 已从文档里摘掉，别再空转
+      if (!world || !document.body.contains(world)) {
+        clearInterval(genTimer); genTimer = 0; return;
+      }
+      (cv ? cv.nodes : []).forEach(n => {
+        if (!n.data || n.data.status !== 'running' || !n.data.gen) return;
+        alive = true;
+        const row = world && world.querySelector(
+          `.cv-node[data-id="${n.id}"] .cv-gen-status`);
+        if (!row) return;
+        row.textContent = (n.data.gen.base || '生成中') + ' · ' + genTiming(n, now);
+      });
+      if (!alive) { clearInterval(genTimer); genTimer = 0; }
+    }, 1000);
   }
 
   function incoming(node) {
@@ -1581,6 +1651,7 @@ window.Canvas = (function () {
     const batch = Math.max(1, Math.min(8, Number(n.data.batch) || 1));
     const seedVal = n.data.seedFixed && Number.isFinite(Number(n.data.seed)) ? Number(n.data.seed) : null;
 
+    genStart(n, wfId, batch);
     setStatus('准备中…');
     try {
       // 确保本地引擎在跑（没跑就静默拉起），而不是直接盲报 502
@@ -1616,6 +1687,7 @@ window.Canvas = (function () {
 
       for (let bi = 0; bi < batch; bi++) {
         if (n.data.canceled) break;
+        if (n.data.gen) { n.data.gen.batchIdx = bi; n.data.gen.curT0 = Date.now(); }
         const tag = batch > 1 ? `第 ${bi + 1}/${batch} 张 · ` : '';
 
         const applied = Comfy.applyInputs(api, {
@@ -1657,6 +1729,8 @@ window.Canvas = (function () {
       if (!collected.length) {
         throw new Error(n.data.canceled ? '已取消' : '一张都没拿到（任务可能被中断）');
       }
+      // 记下这次的真实耗时（不含入库），下次排队时就能给出像样的预计
+      if (n.data.gen) Comfy.durRecord(n.data.gen.key, Date.now() - n.data.gen.t0);
       await finishGen(n, { images: collected }, { api, positive, negative, refs, wf, applied: lastApplied });
     } catch (e) {
       // 用户主动取消时，别把中断报成红色错误
@@ -1668,6 +1742,7 @@ window.Canvas = (function () {
       }
       // 只是等待超时（任务还在引擎里跑）就把 promptId 留着，刷新后能自动接回
       if (!/超时/.test(String(e.message || ''))) n.data.promptId = '';
+      genEnd(n);
       n.data.status = 'error';
       n.data.statusText = e.message.slice(0, 80);
       const el = world.querySelector(`.cv-node[data-id="${n.id}"]`);

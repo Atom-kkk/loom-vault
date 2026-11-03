@@ -174,6 +174,134 @@ window.Comfy = (function () {
     return engineCall('/listdir', { path: path || '~' });
   }
 
+  /* ---------------- 资源监控 ---------------- */
+  // serve.py 补的宿主数据：CPU、引擎进程内存/运行时长、NVIDIA 利用率。
+  // 显存与版本号仍然直接问 ComfyUI（/system_stats 更准）。
+
+  async function engineSys() {
+    return engineCall('/sys', {});
+  }
+
+  /** 卸载模型、释放显存。ComfyUI 原生的 /free，跑完大模型后腾地方用。 */
+  async function freeMemory(unloadModels = true) {
+    const res = await req('/free', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ unload_models: !!unloadModels, free_memory: true })
+    });
+    await res.text().catch(() => '');
+    return true;
+  }
+
+  /* ---------------- 耗时估计 ----------------
+     用来在生成节点上显示「预计剩余」。两条数据源：
+     1) WebSocket 的 step 进度 → 按采样速率外推（精确，但没 WS 时没有）
+     2) 历史同工作流同批量的中位耗时 → 排队阶段也能给个大概
+     都存 localStorage，换浏览器不共享（和其余配置一致）。
+  */
+  const DUR_KEY = 'vault.gen.dur';
+  const DUR_KEEP = 6;
+
+  function durAll() {
+    try { return JSON.parse(localStorage.getItem(DUR_KEY) || '{}') || {}; } catch { return {}; }
+  }
+
+  /** 同工作流 + 同批量才算一类，否则「批量 4 张」会污染「批量 1 张」的均值 */
+  function durKey(wfId, batch) {
+    return String(wfId || 'wf') + '#' + Math.max(1, Number(batch) || 1);
+  }
+
+  function durRecord(key, ms) {
+    if (!key || !Number.isFinite(ms) || ms <= 0) return;
+    const all = durAll();
+    const arr = Array.isArray(all[key]) ? all[key] : [];
+    arr.push(Math.round(ms));
+    all[key] = arr.slice(-DUR_KEEP);
+    all.__last = Math.round(ms);    // 资源面板的「同类参考」用
+    try { localStorage.setItem(DUR_KEY, JSON.stringify(all)); } catch { }
+  }
+
+  /** 中位数比均值抗噪：偶尔一次卡到 27 分钟不会把估计带跑 */
+  function durAvg(key) {
+    const arr = (durAll()[key] || []).filter(x => Number.isFinite(x) && x > 0).sort((a, b) => a - b);
+    if (!arr.length) return null;
+    const mid = Math.floor(arr.length / 2);
+    const ms = arr.length % 2 ? arr[mid] : (arr[mid - 1] + arr[mid]) / 2;
+    return Math.round(ms / 1000);
+  }
+
+  /** 最近一次生成花了多久（秒）。面板上只能当参考 —— 它不知道当前任务属于哪套工作流。 */
+  function durLast() {
+    const v = Number((durAll() || {}).__last);
+    return Number.isFinite(v) && v > 0 ? Math.round(v / 1000) : null;
+  }
+
+  /** 秒 → 01:12 / 1:02:03。给状态行用，尽量短。 */
+  function fmtClock(sec) {
+    const s = Math.max(0, Math.round(Number(sec) || 0));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+    const p2 = n => String(n).padStart(2, '0');
+    return h ? `${h}:${p2(m)}:${p2(r)}` : `${p2(m)}:${p2(r)}`;
+  }
+
+  /** 秒 → 人话：48 秒 / 3 分 20 秒 / 1 小时 12 分 */
+  function fmtLoose(sec) {
+    const s = Math.max(0, Math.round(Number(sec) || 0));
+    if (s < 60) return `${s} 秒`;
+    if (s < 3600) {
+      const m = Math.floor(s / 60), r = s % 60;
+      return r ? `${m} 分 ${r} 秒` : `${m} 分`;
+    }
+    const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
+    return m ? `${h} 小时 ${m} 分` : `${h} 小时`;
+  }
+
+  /** 字节 → 834 MB / 15.2 GB */
+  function fmtBytes(n) {
+    const v = Number(n);
+    if (!Number.isFinite(v) || v <= 0) return '—';
+    const g = v / (1024 ** 3);
+    if (g >= 1) return `${g.toFixed(g >= 10 ? 0 : 1)} GB`;
+    const m = v / (1024 ** 2);
+    if (m >= 1) return `${m.toFixed(m >= 100 ? 0 : 1)} MB`;
+    return `${Math.max(1, Math.round(v / 1024))} KB`;
+  }
+
+  /**
+   * 生成进度的时间文案：「已用 01:12 · 剩余约 03:05」。
+   *
+   * g 的形状（画布节点上挂在 n.data.gen）：
+   *   t0          整批开始的时刻
+   *   curT0       当前这一张开始的时刻（批量时逐张重置）
+   *   batchIdx    当前是第几张（0 起）
+   *   batchTotal  这批共几张
+   *   step/total  采样进度（来自 WebSocket 的 progress 事件）
+   *   per         每步秒数的滑动平均
+   *   hist        同工作流的历史中位耗时（秒），拿不到进度时报个大概
+   *
+   * 剩余时间 = 当前这张剩几步 × 每步秒数 + 后面还没跑的张数 × 单张总时长。
+   */
+  function etaText(g, now) {
+    if (!g) return '';
+    const at = Number.isFinite(now) ? now : Date.now();
+    const elapsed = Math.max(0, (at - g.t0) / 1000);
+    let eta = null;
+
+    if (g.total > 0 && g.step > 0 && g.per > 0) {
+      const cur = Math.max(0, (g.total - g.step) * g.per);
+      const left = Math.max(0, (g.batchTotal || 1) - (g.batchIdx || 0) - 1);
+      eta = cur + left * g.per * g.total;
+    } else if (g.hist) {
+      eta = g.hist - elapsed;
+    }
+
+    let s = '已用 ' + fmtClock(elapsed);
+    if (eta != null && Number.isFinite(eta)) {
+      s += eta > 1 ? ' · 剩余约 ' + fmtClock(eta) : ' · 快好了';
+    }
+    return s;
+  }
+
   /* ---------------- 一键安装 ComfyUI ---------------- */
   // 下载源码 / 建环境 / 装 PyTorch 全在 serve.py 里跑，这里只负责发起和轮询进度。
 
@@ -1075,6 +1203,8 @@ window.Comfy = (function () {
     parseSlots, slotSummary, slotVocabulary: () => Object.keys(SLOT_SPEC), capLabel: (c) => CAP_LABEL[c] || c,
     withFreshSeeds, stripPluginSeeds,
     ensureEngine, engineStatus, setEngineConfig, setEnginePaths, listDir,
+    engineSys, freeMemory,
+    durKey, durRecord, durAvg, durLast, fmtClock, fmtLoose, fmtBytes, etaText,
     scanModels, restartEngine, outputs,
     installStart, installStatus, installCancel, pickDir
   };

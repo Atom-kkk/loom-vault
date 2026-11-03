@@ -14,7 +14,7 @@ const loose = require('node:assert');
 const deep = loose.deepEqual;
 const { loadComfy } = require('./harness');
 
-const { comfy } = loadComfy();
+const { comfy, ctx: sandbox } = loadComfy();
 
 /* ---------------- 公共夹具 ---------------- */
 const slotWorkflow = () => ({
@@ -277,4 +277,154 @@ test('slotSummary 生成人类可读摘要', () => {
   assert.match(text, /2 个图位/);
   assert.match(text, /遮罩/);
   assert.equal(comfy.slotSummary({ labeled: false }), '');
+});
+
+/* ============================================================
+   资源监控用到的格式化 / 耗时估计
+   ============================================================ */
+describe('fmtClock', () => {
+  test('不到一小时是 mm:ss，超过就带小时', () => {
+    assert.equal(comfy.fmtClock(0), '00:00');
+    assert.equal(comfy.fmtClock(72), '01:12');
+    assert.equal(comfy.fmtClock(3725), '1:02:05');
+  });
+
+  test('负数 / 非数字按 0 处理，不吐 NaN', () => {
+    assert.equal(comfy.fmtClock(-5), '00:00');
+    assert.equal(comfy.fmtClock(null), '00:00');
+    assert.equal(comfy.fmtClock('abc'), '00:00');
+  });
+});
+
+describe('fmtLoose', () => {
+  test('秒 / 分 / 小时三种量级', () => {
+    assert.equal(comfy.fmtLoose(48), '48 秒');
+    assert.equal(comfy.fmtLoose(200), '3 分 20 秒');
+    assert.equal(comfy.fmtLoose(180), '3 分');
+    assert.equal(comfy.fmtLoose(4320), '1 小时 12 分');
+  });
+});
+
+describe('fmtBytes', () => {
+  test('GB / MB / KB 自动选单位', () => {
+    assert.equal(comfy.fmtBytes(16 * 1024 ** 3), '16 GB');
+    // 10 GB 以上取整：显存/内存面板里 "15 GB / 16 GB" 比 "15.2 GB" 好读
+    assert.equal(comfy.fmtBytes(15.2 * 1024 ** 3), '15 GB');
+    assert.equal(comfy.fmtBytes(3.4 * 1024 ** 3), '3.4 GB');
+    assert.equal(comfy.fmtBytes(834 * 1024 ** 2), '834 MB');
+    assert.equal(comfy.fmtBytes(2048), '2 KB');
+  });
+
+  test('0 / 空值不显示成 0 GB', () => {
+    assert.equal(comfy.fmtBytes(0), '—');
+    assert.equal(comfy.fmtBytes(null), '—');
+    assert.equal(comfy.fmtBytes('x'), '—');
+  });
+});
+
+describe('生成耗时历史', () => {
+  test('durKey 把批次分开（批量 4 张不该污染批量 1 张）', () => {
+    assert.equal(comfy.durKey('wf1', 1), 'wf1#1');
+    assert.equal(comfy.durKey('wf1', 4), 'wf1#4');
+    assert.equal(comfy.durKey('', 0), 'wf#1', '空 id / 非法批量要归一');
+  });
+
+  test('没记录时 durAvg 返回 null，不编造一个数', () => {
+    assert.equal(comfy.durAvg('nope#1'), null);
+  });
+
+  test('记录后取中位数（秒），偶尔一次异常值不会带偏', () => {
+    const key = 'wfX#1';
+    [100000, 110000, 105000].forEach(ms => comfy.durRecord(key, ms));
+    assert.equal(comfy.durAvg(key), 105);
+
+    comfy.durRecord(key, 1620000);        // 那次卡了 27 分钟
+    const v = comfy.durAvg(key);
+    assert.ok(v >= 105 && v <= 110, `中位数应仍在 ~105s，实际 ${v}`);
+  });
+
+  test('durLast 记录最近一次', () => {
+    comfy.durRecord('wfY#1', 45000);
+    assert.equal(comfy.durLast(), 45);
+  });
+
+  test('非法耗时直接丢弃', () => {
+    comfy.durRecord('wfZ#1', 0);
+    comfy.durRecord('wfZ#1', -3);
+    comfy.durRecord('wfZ#1', NaN);
+    assert.equal(comfy.durAvg('wfZ#1'), null);
+  });
+
+  test('只保留最近 DUR_KEEP 条（不让 localStorage 无限长）', () => {
+    const key = 'wfKeep#1';
+    for (let i = 0; i < 20; i++) comfy.durRecord(key, 1000 + i);
+    // localStorage 在 vm 沙箱里，不是 Node 全局
+    const raw = JSON.parse(sandbox.localStorage.getItem('vault.gen.dur'));
+    assert.equal(raw[key].length, 6);
+  });
+});
+
+/* ============================================================
+   etaText —— 画布节点上的「已用 / 剩余」
+   ============================================================ */
+describe('etaText', () => {
+  const T0 = 1_700_000_000_000;
+
+  test('没有计时器时返回空串（状态行不该多出个 ·）', () => {
+    assert.equal(comfy.etaText(null), '');
+    assert.equal(comfy.etaText(undefined), '');
+  });
+
+  test('一点进度都没有时，只说已用', () => {
+    const s = comfy.etaText({ t0: T0, step: 0, total: 0, per: 0, hist: null }, T0 + 72_000);
+    assert.equal(s, '已用 01:12');
+    assert.ok(!/剩余/.test(s), '没数据就不该编个预计出来');
+  });
+
+  test('有步进进度就按速率外推', () => {
+    // 20 步跑了 4 步，用了 60 秒 → 每步 15 秒 → 还剩 16 步 = 240 秒
+    const g = { t0: T0, curT0: T0, batchIdx: 0, batchTotal: 1, step: 4, total: 20, per: 15 };
+    const s = comfy.etaText(g, T0 + 60_000);
+    assert.match(s, /已用 01:00/);
+    assert.match(s, /剩余约 04:00/);
+  });
+
+  test('批量生成会把后面还没跑的张数算进去', () => {
+    // 第 1/3 张、20 步跑了 4 步 → 当前张剩 240 秒 + 后面 2 张 × 300 秒 = 840 秒
+    const g = { t0: T0, curT0: T0, batchIdx: 0, batchTotal: 3, step: 4, total: 20, per: 15 };
+    const s = comfy.etaText(g, T0 + 60_000);
+    assert.match(s, /已用 01:00/);
+    assert.match(s, /剩余约 14:00/);
+  });
+
+  test('批量跑到第 2 张时已用时间不从零算', () => {
+    const g = { t0: T0, curT0: T0 + 300_000, batchIdx: 1, batchTotal: 3, step: 4, total: 20, per: 15 };
+    const s = comfy.etaText(g, T0 + 360_000);
+    assert.match(s, /已用 06:00/, '整批已用 6 分钟');
+    assert.match(s, /剩余约 09:00/, '本张剩 4 分 + 后面 1 张 5 分');
+  });
+
+  test('没有进度但有历史耗时就拿历史减已用', () => {
+    const g = { t0: T0, step: 0, total: 0, per: 0, hist: 200 };
+    const s = comfy.etaText(g, T0 + 80_000);
+    assert.match(s, /已用 01:20/);
+    assert.match(s, /剩余约 02:00/);
+  });
+
+  test('超过历史耗时就说快好了，不吐负数', () => {
+    const g = { t0: T0, step: 0, total: 0, per: 0, hist: 200 };
+    const s = comfy.etaText(g, T0 + 240_000);
+    assert.match(s, /快好了/);
+    assert.ok(!/-\d/.test(s), '不该出现负数时间：' + s);
+  });
+
+  test('进度算出来不足 1 秒时也是快好了', () => {
+    const g = { t0: T0, batchIdx: 0, batchTotal: 1, step: 19, total: 20, per: 0.01 };
+    assert.match(comfy.etaText(g, T0 + 60_000), /快好了/);
+  });
+
+  test('时间戳早于 t0（系统时钟被改）时不出现负数已用', () => {
+    const g = { t0: T0, step: 0, total: 0, per: 0, hist: null };
+    assert.equal(comfy.etaText(g, T0 - 30_000), '已用 00:00');
+  });
 });
