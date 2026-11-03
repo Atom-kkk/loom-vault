@@ -107,7 +107,7 @@ async function checkForUpdate() {
 
 /** 当前平台该下载哪个资产（与 electron-builder 的产物命名一一对应） */
 function assetNamesFor(version) {
-  if (isWin) return [`Loom Setup ${version}.exe`, `Loom-${version}-win64.zip`];
+  if (isWin) return [`Loom Setup ${version}.exe`, `Loom-${version}-win.zip`];
   if (isMac) return process.arch === 'arm64'
     ? [`Loom-${version}-arm64.dmg`, `Loom-${version}-arm64-mac.zip`]
     : [`Loom-${version}-x64.dmg`, `Loom-${version}-x64-mac.zip`];
