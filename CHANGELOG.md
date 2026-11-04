@@ -26,6 +26,11 @@
 - GitHub Release 的 `fail_on_unmatched_files` 改为 `false`，三个矩阵 job 各自上传、共同补齐
 - CI 构建失败时把 `build.log` 尾部写进 annotation / Step Summary
 - Pages 部署前校验覆盖六个参考库
+- **Windows 应用内更新修复**：`updater.js` 原来只按 `Loom Setup x.y.z.exe` 找安装包，
+  但 GitHub 会把资产名里的空格规范成点（实测 `Loom%20Setup%200.1.0.exe` → 404，
+  `Loom.Setup.0.1.0.exe` → 302），导致 Windows 用户点「下载更新」必然失败。
+  现改为按「当前产物名 → 点号历史名 → 空格名 → zip」顺序逐个尝试，任一命中即可下载。
+  注：v0.1.0 老包内的旧逻辑改不了，老用户需手动装一次；从本版起新链路可用
 
 ### 变更（云端预置更新到 2026.11 阵容 / 设置页精简）
 

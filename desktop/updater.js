@@ -107,7 +107,20 @@ async function checkForUpdate() {
 
 /** 当前平台该下载哪个资产（与 electron-builder 的产物命名一一对应） */
 function assetNamesFor(version) {
-  if (isWin) return [`Loom Setup ${version}.exe`, `Loom-${version}-win.zip`];
+  // Windows 的候选名按「最可能命中」排序，逐个试：
+  //   1. 当前 electron-builder 产物名（win.artifactName = Loom-${version}-win64.${ext}）
+  //   2. 历史命名的规范化形式 —— 上传时写的是 "Loom Setup 0.1.0.exe"，
+  //      但 GitHub 会把资产名里的空格替换成点，实际存成 Loom.Setup.0.1.0.exe。
+  //      用 %20 去请求会 404（已实测），所以必须按点号名请求。
+  //   3. 原始空格名兜底（万一将来 GitHub 不再规范化）。
+  //   4. zip 版本兜底（exe 缺失时至少还能下个免安装版）。
+  if (isWin) return [
+    `Loom-${version}-win64.exe`,
+    `Loom.Setup.${version}.exe`,
+    `Loom Setup ${version}.exe`,
+    `Loom-${version}-win64.zip`,
+    `Loom-${version}-win.zip`
+  ];
   if (isMac) return process.arch === 'arm64'
     ? [`Loom-${version}-arm64.dmg`, `Loom-${version}-arm64-mac.zip`]
     : [`Loom-${version}-x64.dmg`, `Loom-${version}-x64-mac.zip`];
