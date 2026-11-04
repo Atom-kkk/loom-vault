@@ -2,6 +2,14 @@
 
 本项目所有值得注意的改动都会记录在此。
 
+## [0.2.3] - 2026-11-04
+
+### 修复（CI Electron 二进制）
+
+- `npm ci` 的 electron postinstall 在镜像超时时会静默失败，导致 CI 打包阶段找不到 Electron；
+  新增 `Ensure Electron binary` 步骤，缺失时显式重跑 `electron/install.js` 并再次校验
+- Build 步骤补上 `ELECTRON_MIRROR`，避免 electron-builder 回退到慢速下载
+
 ## [0.2.2] - 2026-11-04
 
 ### 修复（CI 打包）

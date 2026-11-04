@@ -83,6 +83,21 @@ jobs:
             test -x desktop/runtime/python/bin/python3
           fi
 
+      # npm ci 的 electron postinstall 偶尔会静默失败（镜像超时），
+      # 二进制缺失时 electron-builder 会自己再下一遍，CI 里更容易超时。
+      # 这里显式确认一次，缺了就重跑 electron 的 install.js。
+      - name: Ensure Electron binary
+        shell: bash
+        working-directory: desktop
+        env:
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+        run: |
+          check_electron() {
+            node -e "const fs=require('fs'); const p=require('electron'); if(!fs.existsSync(p)) process.exit(1)"
+          }
+          check_electron || node node_modules/electron/install.js
+          check_electron
+
       - name: Debug electron install
         continue-on-error: true
         working-directory: desktop
