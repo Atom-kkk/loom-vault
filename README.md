@@ -143,6 +143,9 @@ python3 serve.py                # 启动（或双击 start.command / start.bat�
 
 ## 在线体验（纯静态托管）
 
+👉 **在线直接打开：<https://atom-kkk.github.io/loom-vault/>**
+不用装任何东西，界面、图库、参考图库、画布编辑都能直接点。
+
 前端全部是静态文件，可以直接扔到 GitHub Pages / Vercel / 任意静态空间：
 界面、图库、三个参考图库、提示词、画布编辑全部可用，数据依然只存在你自己的浏览器里。
 

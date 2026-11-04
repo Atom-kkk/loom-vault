@@ -47,9 +47,13 @@ jobs:
           cp index.html favicon.ico apple-touch-icon.png apple-touch-icon-precomposed.png .nojekyll _site/
           cp -r assets demo reference _site/
 
+      # 注意：GITHUB_TOKEN 没有「创建 Pages 站点」的权限（会报
+      # Resource not accessible by integration），所以仓库必须先在
+      # Settings → Pages → Build and deployment → Source 选成 "GitHub Actions"。
+      # 没开的话这一步会红，属于设置问题，不是代码问题。
       - uses: actions/configure-pages@v5
         with:
-          enablement: true          # Pages 还没开就顺手开掉
+          enablement: true          # 已开启时只做读取；未开时这里会失败并提示去设置页
 
       - uses: actions/upload-pages-artifact@v3
         with:
