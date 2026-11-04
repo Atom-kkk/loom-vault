@@ -2,6 +2,14 @@
 
 本项目所有值得注意的改动都会记录在此。
 
+## [0.2.6] - 2026-11-04
+
+### 修复（GitHub Release）
+
+- `softprops/action-gh-release` 的 `fail_on_unmatched_files` 改为 `false`：
+  macOS job 没有 exe、Windows job 没有 dmg，之前会因未匹配文件把整个发布步骤判失败；
+  现在三个矩阵 job 各自上传自己的产物，共同补齐同一个 Release
+
 ## [0.2.5] - 2026-11-04
 
 ### 修复（桌面打包）

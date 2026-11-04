@@ -158,4 +158,6 @@ jobs:
             desktop/dist/*.dmg
             desktop/dist/*-mac.zip
             desktop/dist/*.exe
-          fail_on_unmatched_files: true
+          # 每个平台只产出自己那份：mac 没有 exe，Windows 没有 dmg。
+          # 用 false 让三个矩阵 job 各自上传、共同补齐同一个 Release。
+          fail_on_unmatched_files: false
