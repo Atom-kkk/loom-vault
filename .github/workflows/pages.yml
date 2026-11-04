@@ -28,14 +28,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 缩略图已经在仓库里（4345 张 / 68 MB）。这里只做体检：
+      # 六个库的缩略图都在仓库里（8131 张 / 约 117 MB）。这里只做体检：
       # 缺了就让流水线红掉，别把满是破图的站点发出去。
       - name: Verify reference thumbnails
         run: |
           fail=0
-          for d in outfits faces poses; do
+          for d in outfits faces poses costume assembly pose-depth; do
             n=$(ls "reference/$d" 2>/dev/null | wc -l)
-            printf '%-10s %s\n' "$d" "$n"
+            printf '%-12s %s\n' "$d" "$n"
             [ "$n" -gt 0 ] || fail=1
           done
           [ "$fail" -eq 0 ] || { echo "::error::参考图缩略图缺失，检查 reference/ 是否完整提交"; exit 1; }
