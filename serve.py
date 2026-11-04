@@ -470,6 +470,11 @@ class Engine:
         for _k in ("PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP"):
             env.pop(_k, None)
         env["PYTHONUNBUFFERED"] = "1"
+        # Windows 控制台/管道默认 GBK：ComfyUI 启动日志里带中文或 emoji 时会抛
+        # UnicodeEncodeError: 'gbk' codec can't encode character，进程直接 exit 1。
+        # 这里强制子进程用 UTF-8 输出（日志文件本身也是按 UTF-8 写的）。
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
         try:
             proc = subprocess.Popen(
                 cmd, cwd=comfy_dir, env=env,
@@ -905,6 +910,10 @@ class Installer:
         "cpu": "https://download.pytorch.org/whl/cpu",
         "cu124": "https://download.pytorch.org/whl/cu124",
         "cu126": "https://download.pytorch.org/whl/cu126",
+        # cu128：RTX 50 系（Blackwell / sm_120）唯一能跑的分支。
+        # cu124 / cu126 的轮子里没有 sm_120 内核，装上去出图会报
+        # "CUDA error: no kernel image is available for execution on the device"。
+        "cu128": "https://download.pytorch.org/whl/cu128",
     }
     STEPS = [
         ("prepare", "准备安装目录"),
@@ -1082,6 +1091,7 @@ class Installer:
             env.pop(_k, None)
         try:
             r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
+                               encoding="utf-8", errors="replace",
                                timeout=180, env=env, **self._popen_kwargs())
             return r.returncode, (r.stdout or "") + (r.stderr or "")
         except Exception as e:
@@ -1180,7 +1190,7 @@ class Installer:
         raw = (opts.get("target_dir") or "").strip()
         target = os.path.abspath(os.path.expanduser(raw or self.default_target()))
         torch = (opts.get("torch") or "auto").strip().lower()
-        if torch not in ("auto", "cpu", "cu124", "cu126"):
+        if torch not in ("auto", "cpu", "cu124", "cu126", "cu128"):
             torch = "auto"
         mirror = opts.get("mirror", True)
         mirror = bool(mirror) if not isinstance(mirror, str) else mirror.lower() in ("1", "true", "yes", "on")
@@ -1359,7 +1369,8 @@ class Installer:
                 _env.pop(_k, None)
             r = subprocess.run(
                 [exe, "-c", "import sys;print('%d.%d'%sys.version_info[:2])"],
-                capture_output=True, text=True, timeout=25, env=_env,
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=25, env=_env,
                 stdin=subprocess.DEVNULL, **Installer._popen_kwargs()
             )
             if r.returncode == 0 and r.stdout.strip():
@@ -1499,25 +1510,74 @@ class Installer:
             self._emit("pip 升级失败（不影响继续）：%s" % e)
         return py
 
+    @staticmethod
+    def _gpu_name():
+        """第一块 NVIDIA 显卡的名字。没有 nvidia-smi 或查询失败返回空串。"""
+        exe = shutil.which("nvidia-smi")
+        if not exe:
+            return ""
+        try:
+            r = subprocess.run(
+                [exe, "--query-gpu=name", "--format=csv,noheader"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=15, stdin=subprocess.DEVNULL,
+                **Installer._popen_kwargs()
+            )
+            out = (r.stdout or "").strip()
+            return out.splitlines()[0].strip() if out else ""
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _is_blackwell(name):
+        """RTX 50 系 / Blackwell（compute capability 12.0，sm_120）判定。
+
+        这批卡只能用 cu128 的 PyTorch：cu124/cu126 轮子不含 sm_120 内核，
+        出图时报 "no kernel image is available for execution on the device"。
+        """
+        n = (name or "").upper()
+        if not n:
+            return False
+        if re.search(r"RTX\s*50\d0", n):          # 5050 / 5060 / 5070 / 5080 / 5090（含 Ti、SUPER）
+            return True
+        for key in ("BLACKWELL", "RTX PRO 6000", "RTX PRO 5000", "B100", "B200", "GB200"):
+            if key in n:
+                return True
+        return False
+
     def _torch_flavor(self, flavor):
         if flavor != "auto":
             return flavor
         if sys.platform == "darwin":
             return "pypi"
         if shutil.which("nvidia-smi"):
+            # RTX 50 系（Blackwell）必须 cu128，否则内核不匹配直接跑不动
+            if self._is_blackwell(self._gpu_name()):
+                return "cu128"
             # cu126：cu124 源已停更（最高 torch 2.6.0），而新版 ComfyUI 需要 torch ≥ 2.7
             return "cu126"
         return "cpu"
 
     def _ensure_torch(self, py, flavor, mirror):
+        real = self._torch_flavor(flavor)
+        force_upgrade = False
         code, out = self._capture([py, "-c", "import torch;print(torch.__version__)"])
         if code == 0:
-            self._emit("当前环境已有 PyTorch %s，跳过安装" % out.strip())
-            self._emit("（想换 CUDA 版本：删掉 venv 目录后重装，或选指定版本再装一次）")
-            self._end("torch", "skip")
-            return
-        real = self._torch_flavor(flavor)
+            cur = out.strip()
+            # RTX 50 系必须 cu128。如果环境里已经是 cu124/cu126 的 torch（不含 sm_120
+            # 内核），不能"跳过安装"，否则用户永远卡在 no kernel image 上。
+            if real == "cu128" and "cu128" not in cur:
+                force_upgrade = True
+                self._emit("检测到 RTX 50 系（Blackwell）：现有 PyTorch %s 不含 sm_120 内核" % cur)
+                self._emit("改为重装 cu128 版（约 2.5 GB，旧版本会被替换）…")
+            else:
+                self._emit("当前环境已有 PyTorch %s，跳过安装" % cur)
+                self._emit("（想换 CUDA 版本：删掉 venv 目录后重装，或选指定版本再装一次）")
+                self._end("torch", "skip")
+                return
         cmd = [py, "-m", "pip", "install", "torch", "torchvision", "torchaudio"]
+        if force_upgrade:
+            cmd.append("--upgrade")
         if real in self.TORCH_INDEX:
             cmd += ["--index-url", self.TORCH_INDEX[real]]
             self._emit("PyTorch 来源：%s（%s）" % (self.TORCH_INDEX[real], real))

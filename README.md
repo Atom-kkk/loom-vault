@@ -54,7 +54,7 @@ python3 serve.py                # 启动（或双击 start.command / start.bat�
 - **全程自动**：下载 ComfyUI 源码 → 建独立 `venv`（不碰系统 Python）→ 装 PyTorch → 装 ComfyUI 依赖 → 写入 `.engine.json`，装完上面「引擎目录」自动填好，直接点「启动引擎」。
 - **看得见进度**：六个步骤实时高亮，pip 下载百分比实时滚动，失败会显示真实报错而不是「连接被拒」。
 - **可中断可续装**：点「终止」只杀当前步骤，已下好的源码、环境、pip 缓存都保留，再点一次接着来。
-- **PyTorch 版本可选**：自动判断（macOS 走 MPS、检测到 `nvidia-smi` 走 CUDA 12.4、否则 CPU），也可手动指定 CPU / CUDA 12.4 / 12.6。
+- **PyTorch 版本可选**：自动判断（macOS 走 MPS；**RTX 50 系自动装 CUDA 12.8**，其他 NVIDIA 卡走 CUDA 12.6；否则 CPU），也可手动指定 CPU / CUDA 12.4 / 12.6 / 12.8。50 系（Blackwell / sm_120）**必须**用 CUDA 12.8，装成 12.4/12.6 会报 `CUDA error: no kernel image is available for execution on the device`；装过旧版本的话，再点一次「下载并安装」会自动重装成 cu128。
 - **Python 版本自动处理**：ComfyUI 要求 **Python 3.10+**（源码里大量 `X | None`）。装引擎会自动挑一个 3.10+ 解释器建独立环境；macOS 自带的是 3.9，检测到不够新且装了 Homebrew 时，自动 `brew install python@3.12` 再继续。已有的旧 3.9 环境会改名成 `venv-old` 留档后重建，不会再卡在 `TypeError: unsupported operand type(s) for |` 上。
 - **子进程环境隔离**：建环境和起引擎时都会剥掉宿主机的 `PYTHONPATH` / `PYTHONHOME`，避免新环境误加载外部的 `sitecustomize`（表现为启动后无声卡死）。
 - **国内网络友好**：pip 默认走清华镜像；镜像缺包（新发布的大包常常滞后）会**自动退回官方 PyPI** 重试，不用你手动改源。源码获取先试 `git clone`，超时或失败自动改用 codeload 压缩包。

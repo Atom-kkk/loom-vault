@@ -2,7 +2,7 @@
 
 本项目所有值得注意的改动都会记录在此。
 
-## [0.1.1] - 2026-11-04
+## [0.1.2] - 2026-11-04
 
 ### 新增（三个姊妹素材库接入参考图库）
 
@@ -31,6 +31,18 @@
   `Loom.Setup.0.1.0.exe` → 302），导致 Windows 用户点「下载更新」必然失败。
   现改为按「当前产物名 → 点号历史名 → 空格名 → zip」顺序逐个尝试，任一命中即可下载。
   注：v0.1.0 老包内的旧逻辑改不了，老用户需手动装一次；从本版起新链路可用
+
+### 修复（RTX 50 系 / Windows 编码）
+
+- **RTX 50 系（Blackwell / sm_120）适配**：cu124 / cu126 的 PyTorch 轮子里没有 sm_120 内核，
+  50 系出图必然报 `CUDA error: no kernel image is available for execution on the device`；
+  同时新旧 ComfyUI 在 torch 2.6 上还会抛 `infer_schema(func): Parameter stride has unsupported
+  type list[int]`。现在自动识别 50 系（RTX 5050~5090、RTX PRO 6000 等）并改用 **cu128** 源
+  （torch 2.7+），一举解决这两个错；环境里已装成 cu124/cu126 时，再点一次「下载并安装」会自动
+  `--upgrade` 重装，不用手动删 venv。安装选项里也加了「CUDA 12.8（RTX 50 系必选）」
+- **Windows `UnicodeEncodeError: 'gbk' codec can't encode character`**：桌面版启动 `serve.py`
+  和 ComfyUI 时都没设 `PYTHONIOENCODING`，中文日志往 GBK 管道写就让进程 exit 1。现已对两个
+  子进程都强制 `PYTHONIOENCODING=utf-8` / `PYTHONUTF8=1`，探测类子进程统一按 UTF-8 解码
 
 ### 变更（云端预置更新到 2026.11 阵容 / 设置页精简）
 

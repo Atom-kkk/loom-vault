@@ -272,7 +272,15 @@ function startServer(dir) {
     reapStaleServer();
     server = spawn(py.cmd, args, {
       cwd: dir,
-      env: { ...process.env, PYTHONUNBUFFERED: '1' },
+      env: {
+        ...process.env,
+        PYTHONUNBUFFERED: '1',
+        // Windows 上 Python 默认按 GBK 往管道写，serve.py 里有大量中文日志，
+        // 会抛 UnicodeEncodeError: 'gbk' codec can't encode character 并直接退出。
+        // 强制 UTF-8，Node 这边也正好按 UTF-8 解码。
+        PYTHONIOENCODING: 'utf-8',
+        PYTHONUTF8: '1'
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
       detached: !IS_WIN            // 非 Windows 建独立进程组，退出时整组收掉

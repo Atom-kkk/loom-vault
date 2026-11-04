@@ -1078,10 +1078,11 @@
               <div class="install-row">
                 <label>选项</label>
                 <select id="inst-torch">
-                  <option value="auto">PyTorch：自动判断</option>
+                  <option value="auto">PyTorch：自动判断（推荐）</option>
+                  <option value="cu128">PyTorch：CUDA 12.8（RTX 50 系必选，sm_120）</option>
+                  <option value="cu126">PyTorch：CUDA 12.6（RTX 30/40 系）</option>
+                  <option value="cu124">PyTorch：CUDA 12.4（老卡备用，torch 2.6）</option>
                   <option value="cpu">PyTorch：纯 CPU（小、慢）</option>
-                  <option value="cu124">PyTorch：CUDA 12.4（旧卡手动选，torch 2.6）</option>
-                  <option value="cu126">PyTorch：CUDA 12.6（NVIDIA 默认，推荐）</option>
                 </select>
                 <label class="install-check"><input type="checkbox" id="inst-mirror" checked> 用国内镜像加速</label>
               </div>
@@ -1293,7 +1294,7 @@
           <div class="section">
             <div class="section-title">关于<span></span></div>
             <p class="hint" style="margin:0;line-height:1.9">
-              Loom 织造所 v0.1.1 · 零依赖单页应用，数据全部本地。<br>
+              Loom 织造所 v0.1.2 · 零依赖单页应用，数据全部本地。<br>
               PNG 内嵌参数（A1111 / ComfyUI / NovelAI）上传时自动解析；提示词采用版本链，AI 重写只追加新版本，不覆盖旧的。<br>
               所有文件在 <code>loom-vault/</code> 目录下，备份直接拷走整个文件夹即可。
             </p>

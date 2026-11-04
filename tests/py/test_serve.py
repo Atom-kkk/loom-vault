@@ -427,11 +427,31 @@ class TestInstallerContract(unittest.TestCase):
     def test_torch_flavor_auto_is_known(self):
         flavor = serve.INSTALLER._torch_flavor('auto')
         # darwin 走官方 pypi（装默认 wheel），其他平台按 nvidia-smi 判 CUDA / CPU
-        self.assertIn(flavor, ('pypi', 'cpu', 'cu124', 'cu126'))
+        self.assertIn(flavor, ('pypi', 'cpu', 'cu124', 'cu126', 'cu128'))
 
     def test_explicit_torch_flavor_passthrough(self):
         self.assertEqual(serve.INSTALLER._torch_flavor('cu126'), 'cu126')
+        self.assertEqual(serve.INSTALLER._torch_flavor('cu128'), 'cu128')
         self.assertEqual(serve.INSTALLER._torch_flavor('cpu'), 'cpu')
+
+    def test_blackwell_detection(self):
+        # RTX 50 系（sm_120）只能用 cu128，必须认出来
+        for name in ('NVIDIA GeForce RTX 5090',
+                     'NVIDIA GeForce RTX 5080',
+                     'NVIDIA GeForce RTX 5070 Ti',
+                     'NVIDIA GeForce RTX 5060',
+                     'NVIDIA RTX PRO 6000 Blackwell'):
+            self.assertTrue(serve.INSTALLER._is_blackwell(name), name)
+        # 40 系及更早走 cu126，不能误判成 Blackwell
+        for name in ('NVIDIA GeForce RTX 4090',
+                     'NVIDIA GeForce RTX 3080',
+                     'NVIDIA GeForce GTX 1660',
+                     ''):
+            self.assertFalse(serve.INSTALLER._is_blackwell(name), name)
+
+    def test_cu128_is_known_index(self):
+        self.assertIn('cu128', serve.INSTALLER.TORCH_INDEX)
+        self.assertIn('cu128', serve.INSTALLER.TORCH_INDEX['cu128'])
 
 
 # ============================================================
