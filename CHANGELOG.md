@@ -2,6 +2,15 @@
 
 本项目所有值得注意的改动都会记录在此。
 
+## [0.2.2] - 2026-11-04
+
+### 修复（CI 打包）
+
+- `electron-builder` 显式加 `--publish never`，产物交给后面的 `action-gh-release` 发布，
+  避免它在 tag 构建时自己尝试发布而失败
+- `stage-web.mjs` 按 runner 平台检查 runtime：Windows 只要求 `python-win`，macOS 只要求 `python`，
+  不再用 macOS 的路径卡住 Windows 构建
+
 ## [0.2.1] - 2026-11-04
 
 ### 修复（桌面打包 / CI）

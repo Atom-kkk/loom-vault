@@ -32,22 +32,33 @@ for (const dir of ['assets', 'reference', 'demo']) {
 //    直接把 runtime/python 映射到 resources/python（main.js 从那里找它）。
 //    放进 staging 会跟着 web 一起被打进包、再被复制进用户目录，白占 67MB。
 //    这里只把关：没有它就违背了「双击即用」的要求，直接拒绝打包。
-const pySrc = path.join(desktop, 'runtime', 'python');
-if (!existsSync(path.join(pySrc, 'bin', 'python3'))) {
-  console.error('  ✕ 未找到 desktop/runtime/python/bin/python3 —— 内置 Python 缺失，拒绝打包');
-  console.error('    请下载 python-build-standalone（macOS arm64，install_only 版）');
-  console.error('    解压后把内容放到 desktop/runtime/python，再重新打包。');
-  process.exit(1);
-}
-console.log('  python runtime 就位（extraResources: runtime/python → resources/python）');
+const macPy = path.join(desktop, 'runtime', 'python', 'bin', 'python3');
 const winPy = [
   path.join(desktop, 'runtime', 'python-win', 'bin', 'python.exe'),
   path.join(desktop, 'runtime', 'python-win', 'python.exe')
 ].find(existsSync);
-if (!winPy) {
-  console.warn('  ⚠ 未找到 runtime/python-win 的 python.exe —— Windows 包会退回系统 Python');
-} else {
+const isWin = process.platform === 'win32';
+
+if (isWin) {
+  // Windows runner 只需要 Windows runtime；mac 版由 mac runner 单独打
+  if (!winPy) {
+    console.error('  ✕ 未找到 desktop/runtime/python-win 的 python.exe —— 内置 Python 缺失，拒绝打包');
+    process.exit(1);
+  }
   console.log('  windows python runtime 就位（win.extraResources: runtime/python-win → resources/python）');
+} else {
+  if (!existsSync(macPy)) {
+    console.error('  ✕ 未找到 desktop/runtime/python/bin/python3 —— 内置 Python 缺失，拒绝打包');
+    console.error('    请下载 python-build-standalone（macOS arm64/x64，install_only 版）');
+    console.error('    解压后把内容放到 desktop/runtime/python，再重新打包。');
+    process.exit(1);
+  }
+  console.log('  python runtime 就位（extraResources: runtime/python → resources/python）');
+  if (!winPy) {
+    console.warn('  ⚠ 未找到 runtime/python-win 的 python.exe —— Windows 包会退回系统 Python');
+  } else {
+    console.log('  windows python runtime 就位（win.extraResources: runtime/python-win → resources/python）');
+  }
 }
 
 console.log('staged ->', dst);

@@ -1,7 +1,7 @@
 {
   "name": "loom-vault-desktop",
   "productName": "Loom",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Loom 织造所 · 本地 AI 出图工作台（桌面版）",
   "author": "Atom-kkk",

@@ -100,7 +100,7 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-        run: bash -c 'npm run stage && npx electron-builder ${{ matrix.eb_args }} 2>&1 | tee build.log; exit ${PIPESTATUS[0]}'
+        run: bash -c 'npm run stage && npx electron-builder ${{ matrix.eb_args }} --publish never 2>&1 | tee build.log; exit ${PIPESTATUS[0]}'
         shell: bash
 
       - name: Upload build log (always)
