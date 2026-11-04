@@ -1,17 +1,21 @@
 {
   "name": "loom-vault-desktop",
   "productName": "Loom",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "private": true,
   "description": "Loom 织造所 · 本地 AI 出图工作台（桌面版）",
   "author": "Atom-kkk",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Atom-kkk/loom-vault.git"
+  },
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "dist:mac": "node scripts/stage-web.mjs && electron-builder --mac",
-    "dist:win": "node scripts/stage-web.mjs && electron-builder --win",
-    "dist": "node scripts/stage-web.mjs && electron-builder --mac --win",
+    "dist:win": "node scripts/stage-web.mjs && electron-builder --win --x64",
+    "dist": "node scripts/stage-web.mjs && electron-builder --mac --win --x64",
     "stage": "node scripts/stage-web.mjs"
   },
   "devDependencies": {

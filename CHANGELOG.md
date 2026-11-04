@@ -2,6 +2,14 @@
 
 本项目所有值得注意的改动都会记录在此。
 
+## [0.2.5] - 2026-11-04
+
+### 修复（桌面打包）
+
+- `desktop/package.json` 补上 `repository`，否则 CI 里 electron-builder 在 tag 构建时
+  无法解析发布仓库，报 `Cannot read properties of null (reading 'channel')`
+- `npm run dist:win` / `dist` 显式指定 `--x64`，避免在 Apple Silicon Mac 上默认打出 Windows arm64 包
+
 ## [0.2.4] - 2026-11-04
 
 ### 修复（CI 可观测性）
