@@ -2,56 +2,6 @@
 
 本项目所有值得注意的改动都会记录在此。
 
-## [0.2.6] - 2026-11-04
-
-### 修复（GitHub Release）
-
-- `softprops/action-gh-release` 的 `fail_on_unmatched_files` 改为 `false`：
-  macOS job 没有 exe、Windows job 没有 dmg，之前会因未匹配文件把整个发布步骤判失败；
-  现在三个矩阵 job 各自上传自己的产物，共同补齐同一个 Release
-
-## [0.2.5] - 2026-11-04
-
-### 修复（桌面打包）
-
-- `desktop/package.json` 补上 `repository`，否则 CI 里 electron-builder 在 tag 构建时
-  无法解析发布仓库，报 `Cannot read properties of null (reading 'channel')`
-- `npm run dist:win` / `dist` 显式指定 `--x64`，避免在 Apple Silicon Mac 上默认打出 Windows arm64 包
-
-## [0.2.4] - 2026-11-04
-
-### 修复（CI 可观测性）
-
-- CI 构建失败时把 `build.log` 尾部和错误摘要写进 annotation / Step Summary，
-  便于直接看到 electron-builder 或 stage-web 的真实报错
-
-## [0.2.3] - 2026-11-04
-
-### 修复（CI Electron 二进制）
-
-- `npm ci` 的 electron postinstall 在镜像超时时会静默失败，导致 CI 打包阶段找不到 Electron；
-  新增 `Ensure Electron binary` 步骤，缺失时显式重跑 `electron/install.js` 并再次校验
-- Build 步骤补上 `ELECTRON_MIRROR`，避免 electron-builder 回退到慢速下载
-
-## [0.2.2] - 2026-11-04
-
-### 修复（CI 打包）
-
-- `electron-builder` 显式加 `--publish never`，产物交给后面的 `action-gh-release` 发布，
-  避免它在 tag 构建时自己尝试发布而失败
-- `stage-web.mjs` 按 runner 平台检查 runtime：Windows 只要求 `python-win`，macOS 只要求 `python`，
-  不再用 macOS 的路径卡住 Windows 构建
-
-## [0.2.1] - 2026-11-04
-
-### 修复（桌面打包 / CI）
-
-- CI 检出后缺少 `desktop/runtime`（被 .gitignore 排除），`stage-web.mjs` 直接拒绝打包；
-  现在按 runner 架构从 python-build-standalone 下载对应 standalone Python（macOS arm64 / x64、Windows x64）
-- Windows 打包显式指定 `--win --x64`，避免在 Apple Silicon runner 上默认产出 arm64 包
-- `stage-web.mjs` 兼容 Windows standalone Python 的根目录 `python.exe` 布局
-- Pages 部署前校验覆盖六个参考库
-
 ## [0.2.0] - 2026-11-04
 
 ### 新增（三个姊妹素材库接入参考图库）
@@ -64,6 +14,18 @@
 - 画布「加参考图」弹窗同步接入六个库
 - 新增 `scripts/fetch_libraries.py`：拉取/转换三个库的元数据与缩略图，生成 `reference/data-extra.js`
 - 设置页「清理高清原图缓存」同时清理新库缓存
+
+### 修复（桌面打包 / CI）
+
+- CI 检出后缺少 `desktop/runtime`，现按 runner 架构从 python-build-standalone 下载对应
+  standalone Python（macOS arm64/x64、Windows x64），并兼容 Windows 根目录 `python.exe` 布局
+- Windows 打包固定 `--win --x64`，避免在 Apple Silicon 机器上默认产出 arm64 包
+- CI 打包前显式校验 Electron 二进制，缺失时重跑 `electron/install.js` 并校验
+- `desktop/package.json` 补 `repository`，electron-builder 加 `--publish never`，
+  避免 tag 构建时自行发布报 `Cannot read properties of null (reading 'channel')`
+- GitHub Release 的 `fail_on_unmatched_files` 改为 `false`，三个矩阵 job 各自上传、共同补齐
+- CI 构建失败时把 `build.log` 尾部写进 annotation / Step Summary
+- Pages 部署前校验覆盖六个参考库
 
 ### 变更（云端预置更新到 2026.11 阵容 / 设置页精简）
 
