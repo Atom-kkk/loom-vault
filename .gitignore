@@ -31,3 +31,6 @@ desktop/runtime/
 
 # ZCode 会话本地配置
 .zcode/
+
+# WorkBuddy 项目记忆与会话数据（本机，不入库）
+.workbuddy/
