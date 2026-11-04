@@ -2,6 +2,13 @@
 
 本项目所有值得注意的改动都会记录在此。
 
+## [0.2.4] - 2026-11-04
+
+### 修复（CI 可观测性）
+
+- CI 构建失败时把 `build.log` 尾部和错误摘要写进 annotation / Step Summary，
+  便于直接看到 electron-builder 或 stage-web 的真实报错
+
 ## [0.2.3] - 2026-11-04
 
 ### 修复（CI Electron 二进制）

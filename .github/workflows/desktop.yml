@@ -115,7 +115,21 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-        run: bash -c 'npm run stage && npx electron-builder ${{ matrix.eb_args }} --publish never 2>&1 | tee build.log; exit ${PIPESTATUS[0]}'
+        run: |
+          set +e
+          ( npm run stage && npx electron-builder ${{ matrix.eb_args }} --publish never ) 2>&1 | tee build.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            msg=$(tail -n 12 build.log | tr '\n' ' ' | cut -c1-900)
+            echo "::error title=Build failed::$msg"
+            {
+              echo "### Build log tail"
+              echo '```'
+              tail -n 40 build.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
         shell: bash
 
       - name: Upload build log (always)
