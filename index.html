@@ -79,8 +79,10 @@
 <script src="assets/parse.js"></script>
 <script src="assets/ai.js"></script>
 <script src="reference/data.js"></script>
+<script src="reference/data-extra.js"></script>
 <script src="assets/app.js"></script>
 <script src="assets/reference.js"></script>
+<script src="assets/library.js"></script>
 <script src="assets/comfy.js"></script>
 <script src="assets/cloud.js"></script>
 <script src="assets/canvas.js"></script>
@@ -92,6 +94,7 @@
   if (window.Vault) {
     Vault.boot().then(() => {
       if (window.REF) REF.preload();
+      if (window.LIB) LIB.preload();
       if (window.SNIP) SNIP.preload();
       if (window.SYS) SYS.init();
     });

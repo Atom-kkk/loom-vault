@@ -203,6 +203,9 @@ window.Vault = (function () {
       ${item('outfits', '服饰参考', 'shirt', (window.REF && REF.counts().outfits) || '')}
       ${item('faces', '人脸参考', 'user', (window.REF && REF.counts().faces) || '')}
       ${item('poses', '姿势参考', 'user', (window.REF && REF.counts().poses) || '')}
+      ${item('costume', '动画服装', 'shirt', (window.LIB && LIB.counts().costume) || '')}
+      ${item('assembly', '角色组装', 'spark', (window.LIB && LIB.counts().assembly) || '')}
+      ${item('poseDepth', '姿势深度', 'user', (window.LIB && LIB.counts().poseDepth) || '')}
       ${item('composer', '提示词组合', 'spark', (window.REF && REF.stageCount()) || '')}
       <div class="nav-label">模型</div>
       ${item('models', '云端模型', 'cpu', state.models.length || '')}
@@ -220,6 +223,7 @@ window.Vault = (function () {
 
   function go(view, params) {
     if (window.REF && REF.isOpen()) REF.close();
+    if (window.LIB && LIB.isOpen()) LIB.close();
     if (!$('#lightbox').classList.contains('hidden')) closeLightbox();
     state.view = view;
     const el = $('#view');
@@ -1308,6 +1312,7 @@ window.Vault = (function () {
       if (e.key === 'Escape') {
         if (!$('#modal').classList.contains('hidden')) { modalCloser?.(); return; }
         if (window.REF && REF.isOpen()) { REF.close(); return; }
+        if (window.LIB && LIB.isOpen()) { LIB.close(); return; }
         if (!$('#lightbox').classList.contains('hidden')) { closeLightbox(); return; }
       }
       if (inField) return;
@@ -1315,6 +1320,9 @@ window.Vault = (function () {
         if (window.REF && REF.isOpen()) {
           if (e.key === 'ArrowLeft') REF.step(-1);
           if (e.key === 'ArrowRight') REF.step(1);
+        } else if (window.LIB && LIB.isOpen()) {
+          if (e.key === 'ArrowLeft') LIB.step(-1);
+          if (e.key === 'ArrowRight') LIB.step(1);
         } else {
           if (e.key === 'ArrowLeft') stepLightbox(-1);
           if (e.key === 'ArrowRight') stepLightbox(1);

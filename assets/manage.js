@@ -1293,7 +1293,7 @@
           <div class="section">
             <div class="section-title">关于<span></span></div>
             <p class="hint" style="margin:0;line-height:1.9">
-              Loom 织造所 v0.1 · 零依赖单页应用，数据全部本地。<br>
+              Loom 织造所 v0.2 · 零依赖单页应用，数据全部本地。<br>
               PNG 内嵌参数（A1111 / ComfyUI / NovelAI）上传时自动解析；提示词采用版本链，AI 重写只追加新版本，不覆盖旧的。<br>
               所有文件在 <code>loom-vault/</code> 目录下，备份直接拷走整个文件夹即可。
             </p>
@@ -1829,9 +1829,10 @@
      数据
      ============================================================ */
   V.on('ref-cache-clear', async () => {
-    if (!window.REF?.clearHiCache) return;
-    const n = await REF.clearHiCache();
-    toast(n ? `已清理 ${n} 张高清原图缓存，缩略图仍保留` : '没有需要清理的高清缓存', 'ok');
+    const n = window.REF?.clearHiCache ? await REF.clearHiCache() : 0;
+    const m = window.LIB?.clearHiCache ? await LIB.clearHiCache() : 0;
+    const total = n + m;
+    toast(total ? `已清理 ${total} 张高清原图缓存，缩略图仍保留` : '没有需要清理的高清缓存', 'ok');
   });
 
   V.on('set-export', async () => {

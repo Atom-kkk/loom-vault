@@ -23,7 +23,7 @@
 | ![图库](docs/screenshots/03-gallery.png) | ![点开一张图](docs/screenshots/04-lightbox.png) |
 | 图库：拖入即存，自动解析内嵌参数 | 点开一张图：提示词版本链、参数档案、送去画布 |
 | ![输出节点](docs/screenshots/07-canvas-node.png) | ![加参考图](docs/screenshots/26-canvas-add-ref.png) |
-| 输出节点：尺寸 / 张数 / 生成，状态行带已用与预计 | 加参考图：三个内置库 + 我的图库 + 本地文件，可多选 |
+| 输出节点：尺寸 / 张数 / 生成，状态行带已用与预计 | 加参考图：六个内置库 + 我的图库 + 本地文件，可多选 |
 | ![本地配置](docs/screenshots/15-local-engine.png) | ![资源监控](docs/screenshots/20-monitor.png) |
 | 本地配置：引擎安装 / 目录 / 启动，模型路径也在这 | 资源监控：队列、显存、内存、CPU、版本 |
 
@@ -70,7 +70,7 @@ python3 serve.py                # 启动（或双击 start.command / start.bat�
 > 必须通过 `http://127.0.0.1:xxxx` 访问，不能双击 `index.html`。
 > 浏览器禁止 `file://` 页面使用 IndexedDB，直接打开会提示「数据库打不开」。这是浏览器的安全策略，不是应用的问题。
 
-参考图库的 4345 张缩略图（约 68 MB）已随仓库分发，克隆下来就能直接用。想换源重拉（幂等，已有文件会跳过）：`python3 scripts/fetch_reference.py` 一次性拉全，**国内网络如果卡在 cdn/fastly 节点，用 `python3 scripts/fetch_reference_gcore.py`**——固定走 `gcore.jsdelivr.net`，绕过系统代理，快得多。
+六个参考图库的 8131 张缩略图（约 117 MB）已随仓库分发，克隆下来就能直接用。想换源重拉或补齐缺失文件：新增三库用 `python3 scripts/fetch_libraries.py`，原三库用 `python3 scripts/fetch_reference.py`（**国内网络如果卡在 cdn/fastly 节点，用 `python3 scripts/fetch_reference_gcore.py`**——固定走 `gcore.jsdelivr.net`，绕过系统代理，快得多）。
 
 想先看看效果：把 `demo/` 里的三张图拖进窗口，其中两张带内嵌参数（A1111 与 ComfyUI），会自动解析出提示词、种子、步数、LoRA。
 
@@ -211,9 +211,9 @@ Loom 启动引擎时默认带 `--enable-cors-header`，所以浏览器能跨域�
 - 🧩 **无限画布**：节点式连线，正向/负向提示词 + 参考图 → 输出，一键出图；自动拉起本地 ComfyUI 引擎
 - 📐 **出图尺寸随手改**：卡片上直接调宽 × 高（图片与视频通用），带 1:1 / 3:2 / 16:9 / 竖屏等常用比例，自动吸附到 64 的倍数
 - ⚡ **底栏三个按钮起一张图**：提示词 / 参考图 / 出图，点两下加出图，连线自动接好
-- 🖼️ **参考图库一键导入**：服饰 / 人脸 / 姿势三个内置库，多选后成排铺到画布；工作流有 `ref_image_xx` 图位时自动连线，没有就不画假线并说明原因
+- 🖼️ **参考图库一键导入**：服饰 / 人脸 / 姿势 / 动画服装 / 角色组装 / 姿势深度六个内置库，多选后成排铺到画布；工作流有 `ref_image_xx` 图位时自动连线，没有就不画假线并说明原因
 - 📊 **资源监控**：顶栏常驻「运行中 / 排队 / 显存」，展开看显卡、内存、CPU、版本；生成节点上有已用时间与预计剩余
-- 🎭 **参考图库**：内置 4300+ 张服饰 / 人脸 / 姿势参考，按需加载高清原图
+- 🎭 **参考图库**：内置 8100+ 张服饰 / 人脸 / 姿势 / 动画服装 / 角色组装 / depth 参考，按需加载高清原图
 - ✍️ **提示词版本链**：改一版存一版，永不覆盖，随时回退对比
 - 🧩 **模型**：云端模型（API 出图）集中配置，内置主流厂商预设；本地基座不单独建卡，文件名显示在「本地部署工作流」卡片上
 - 🔒 **纯本地**：零依赖、零构建、数据全在本机浏览器，不上传任何服务器
@@ -303,19 +303,23 @@ PNG 的 `tEXt` / `iTXt` / `zTXt` 三种文本块都支持，压缩块用 `Decomp
 > Key 以明文存在本机浏览器里，只在你点生成时发给对应服务商的地址。公共电脑上不要填。
 > 本地模型连不上时，先确认服务在跑，并且允许跨域：Ollama 用 `OLLAMA_ORIGINS=* ollama serve`，LM Studio 在 Server 设置里打开 CORS。
 
-### 参考图库（内置三个）
+### 参考图库（内置六个）
 
-把自己的三套开源素材库直接搬了进来，**4345 张缩略图全部本地化**，断网也能翻：
+把作者自己的六套开源素材库接了进来，合计 **8131 张缩略图，全部随仓库分发**，克隆下来断网也能翻：
 
 | 库 | 数量 | 能做什么 |
 |---|---|---|
 | **服饰参考库** | 1407 张服装参考图 · 8 个分类 | 搜索编号/关键词（中英）、按分类筛、复制关键词、一键拼成品提示词、让智能体扩写成完整提示词 |
 | **人脸参考库** | 1499 张（正面 893 + 造型 606） | 按分区与发长筛、看原图尺寸、作为角色一致性参考 |
 | **姿势参考库** | 1439 张人体姿势 · 4 体系 / 26 动作 / 5 视角 | 按体系·动作分类·视角三维交叉筛选、用作姿势参考、纳入提示词组合台 |
+| **动画服装库** | 1320 套动画服装 · 8 类 | 纯服装不含人物，中英关键词搜索，2:3 画幅，可直接拼提示词 |
+| **角色组装库** | 1027 张角色素材 · 发型/服装/姿势 | Danbooru 标签检索、发色变体、姿势线稿切换，选部件拼角色提示词 |
+| **姿势深度库** | 1439 张 depth 图 · 288 组 / 5 视角 | 按体系·动作·视角筛选，用作 ControlNet depth 参考，锁定空间姿态 |
 
 **缩略图本地、原图按需加载**：打开参考图灯箱，或把参考图放进画布节点时，会先显示本地缩略图，再后台下载高清原图并替换。人脸原图约 1122×1402，服装原图约 1366×2048。下载过的原图缓存进 IndexedDB（最多 40 张），下次离线也能显示；设置页可以单独清理这份缓存。下载超时或失败会自动换备用 CDN，仍失败就保留缩略图。画布生成和「存入图库」也优先使用已下载的原图。
 
-三个库都能：点开看大图（`← / →` 翻页）、下载、**一键存入自己的图库**（自动归到「参考图」分类并保留来源编号）、**加入提示词组合台**、跳回源站。
+六个库都能：点开看大图（`← / →` 翻页）、下载、**一键存入自己的图库**（自动归到「参考图」分类并保留来源编号）、**加入提示词组合台**、跳回源站。
+缩略图全部随仓库分发；如果换源重拉或补齐缺失文件，运行 `python3 scripts/fetch_libraries.py`（幂等，已下载会自动跳过）。
 图片版权归原作者，详见下方「素材来源」。
 
 ### 提示词组合台
@@ -385,7 +389,7 @@ shallow depth of field, photorealistic, fine skin detail, subtle film grain
 
 **参考图库一键导入**：
 
-内置的三个库（1407 / 1499 / 1439 条）在弹窗里直接可翻、可搜（编号前缀或关键词），
+内置的六个库（1407 / 1499 / 1439 / 1320 / 1027 / 1439 条）在弹窗里直接可翻、可搜（编号前缀或关键词），
 选中的图点「放到画布」就成排变成参考图节点。**工作流声明了 `ref_image_xx` 图位时才会自动接到输出节点**；
 没有图位（内置的 KREA2 是纯文生图）就只放图、不连线，并明确告诉你原因 —— 画一根传不进去的线，比不画更误导。
 一次最多 60 张。
@@ -601,26 +605,36 @@ ai-image-vault/
 ├── docs/
 │   └── screenshots/    # 24 张界面截图，由 scripts/make_shots.mjs 生成
 ├── scripts/
-│   ├── fetch_reference_gcore.py  # 克隆后拉取 4345 张参考图缩略图（幂等、可续传）
+│   ├── fetch_reference.py        # 拉取原三个库的 4345 张参考图缩略图（幂等、可续传）
+│   ├── fetch_reference_gcore.py  # 同上，固定走 gcore.jsdelivr.net（国内网络更快）
+│   ├── fetch_libraries.py        # 拉取/转换三个姊妹素材库（元数据 + 缩略图 + data-extra.js）
 │   ├── make_icons.py             # 重新生成 favicon.ico / apple-touch-icon（纯标准库，无 PIL）
 │   ├── make_shots.mjs            # 自动截取全部界面（驱动本机 Chrome，无第三方依赖）
 │   ├── setup-engine.sh           # 命令行装 ComfyUI 引擎（macOS / Linux）
 │   └── setup-engine.bat          # 同上（Windows）
-├── reference/          # 三个参考图库
-│   ├── data.js         # 三份元数据内联版（file:// 双击可用，优先加载）
+├── reference/          # 六个参考图库
+│   ├── data.js         # 原三个库的元数据内联版（file:// 双击可用，优先加载）
+│   ├── data-extra.js   # 新增三个库的元数据内联版（由 fetch_libraries.py 生成）
 │   ├── outfits.json    # 1407 条服装元数据（编号/分类/关键词）
 │   ├── outfits/        # 服装缩略图 360×540 WebP，约 12 MB
 │   ├── faces.json      # 1499 条人脸元数据（分区/发长/风格/原图尺寸）
 │   ├── faces/          # 人脸缩略图 400×500 WebP，约 15 MB
 │   ├── poses.json      # 1439 条姿势元数据（体系/分类/视角/姿势名）
-│   └── poses/          # 姿势缩略图 900×1200 JPG，约 25 MB
+│   ├── poses/          # 姿势缩略图 900×1200 JPG，约 25 MB
+│   ├── costume.json    # 1320 套动画服装元数据（8 类 / 中英关键词）
+│   ├── costume/        # 动画服装缩略图 WebP
+│   ├── assembly.json   # 1027 张角色组装素材元数据（发型/服装/姿势 + 标签）
+│   ├── assembly/       # 角色组装缩略图 420px WebP
+│   ├── pose-depth.json # 1439 张 depth 深度图元数据（288 组 / 5 视角）
+│   └── pose-depth/     # depth 缩略图 900×1200 JPG
 └── assets/
     ├── style.css       # 深/浅双主题，全部样式
     ├── db.js           # IndexedDB 封装 + 通用工具 U
     ├── parse.js        # PNG 文本块解析 + A1111/ComfyUI/NovelAI 参数提取 + 缩略图
     ├── ai.js           # 多服务商 + 智能体：请求、九种提示词模式、模型拉取
     ├── app.js          # 应用外壳、图库、灯箱、上传、提示词版本链
-    ├── reference.js    # 服饰 / 人脸参考库：分页网格、筛选、灯箱、组合台
+    ├── reference.js    # 服饰 / 人脸 / 姿势参考库：分页网格、筛选、灯箱、组合台
+    ├── library.js      # 动画服装 / 角色组装 / 姿势深度：筛选、灯箱、存入图库
     ├── snippets.js     # 提示词片段库（入口已下线，代码与数据保留）
     ├── comfy.js        # ComfyUI API 封装：提交、轮询、取图、上传、工作流分析、耗时估计
     ├── canvas.js       # 无限画布：平移缩放、节点、连线、撤销重做、工作流识别、尺寸控件
@@ -697,15 +711,21 @@ SHOTS=ref node scripts/make_shots.mjs     # 只重截名字里带 ref 的那几�
 
 ## 素材来源
 
-内置的三个参考图库来自作者自己的另外三个开源项目，图片版权归原作者，**不随本项目的代码许可转让**：
+内置的六个参考图库来自作者自己的开源素材项目，图片版权归原作者，**不随本项目的代码许可转让**：
 
 - **服饰**：[AI-Clothing-Resource-Library](https://github.com/Atom-kkk/AI-Clothing-Resource-Library) · 原始图库「衣装集 COSTUME-DB-01」· 图 ギア（[@giaaibusi](https://x.com/giaaibusi)）
   原站许可：可免费用于创作（含商业作品的制作、编辑、参考），**禁止再分发、转载或转售图片数据本身**。
 - **人脸**：[AI-Face-Resource-Library](https://github.com/Atom-kkk/AI-Face-Resource-Library) · 原始图库「AIモデル顔データベース」· 图 ギア / あぎ（[@agi_aibusi](https://x.com/agi_aibusi)）· **CC0**
 - **姿势**：[AI-Pose-Resource-Library](https://github.com/Atom-kkk/AI-Pose-Resource-Library) · POSE Atlas 姿势参考库中文汉化版 · 图 ギア
   原站许可：可免费用于创作参考，**禁止再分发、转载或转售图片数据本身**。
+- **动画服装**：[AI-Costume-Anime-Resource-Library](https://github.com/Atom-kkk/AI-Costume-Anime-Resource-Library) · COSTUME-ANIME-DB「衣装集 アニメ版」· 图 ギア（[@giaaibusi](https://x.com/giaaibusi)）
+  原站许可：可免费用于创作（含商业作品的制作、编辑、参考），**禁止再分发、转载、转售图片数据本身**。
+- **角色组装**：[Character-Assembly-Database](https://github.com/Atom-kkk/Character-Assembly-Database) · 原始日文角色组装素材库 · 整理/汉化 Atom-kkk
+  图片仅建议作为参考 / ControlNet 底图，**不可把图片本身作为作品的一部分销售**，禁止再分发、转载、转售。
+- **姿势深度**：[AI-Pose-Depth-Resource-Library](https://github.com/Atom-kkk/AI-Pose-Depth-Resource-Library) · POSE Atlas depth 分册 · 图 ギア
+  原站许可：可免费用于创作（含商业作品），**禁止再分发、转载、转售图片数据本身**；代码 MIT，图片不随代码授权。
 
-本地只处理缩略图（360×540 / 400×500 / 900×1200），原图请到各自源站获取。这些素材仅供个人创作参考与界面实践，商用前请自行确认原作者许可。
+本地只处理缩略图，原图请到各自源站或按需下载。这些素材仅供个人创作参考与界面实践，商用前请自行确认原作者许可。
 
 ## 已知边界
 
@@ -713,7 +733,7 @@ SHOTS=ref node scripts/make_shots.mjs     # 只重截名字里带 ref 的那几�
 - 图片二进制不进导出包，换机后元数据能恢复但需要重新关联图片
 - 单库容量受浏览器配额限制（通常几 GB，视磁盘剩余空间浮动）
 - 参考图库为只读，不能删改条目；想改就先「存入我的图库」，在自己库里编辑
-- **双击 `index.html`（`file://`）时**：参考库浏览、筛选、组合台、复制提示词都正常（数据走内联 `reference/data.js`），但「存入图库」和下「下载」按钮不可用 —— 浏览器禁止 `file://` 页面 `fetch` 本地文件。要用这两个功能请走 `start.command`
+- **双击 `index.html`（`file://`）时**：参考库浏览、筛选、组合台、复制提示词都正常（数据走内联 `reference/data.js` 与 `reference/data-extra.js`），但「存入图库」和下「下载」按钮不可用 —— 浏览器禁止 `file://` 页面 `fetch` 本地文件。要用这两个功能请走 `start.command`
 - 高清原图采用按需下载：第一次打开某张参考图时需要联网；只有下载过的那部分才能离线看原图，其余仍有本地缩略图
 - UI → API 转换依赖 ComfyUI 的 `/object_info`，**没连上 ComfyUI 就转不了**（UI 格式仍可正常可视化）
 - 转换只处理标准 widget；带子图（Subgraph）、动态提示词、自定义节点内部逻辑的复杂工作流，转出来可能有偏差，建议先跑一次看结果

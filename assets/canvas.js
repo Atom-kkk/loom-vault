@@ -1793,6 +1793,9 @@ window.Canvas = (function () {
     { key: 'outfits', label: '服饰参考' },
     { key: 'faces', label: '人脸参考' },
     { key: 'poses', label: '姿势参考' },
+    { key: 'costume', label: '动画服装' },
+    { key: 'assembly', label: '角色组装' },
+    { key: 'poseDepth', label: '姿势深度' },
     { key: 'file', label: '本地文件' }
   ];
   const REF_PICK_LIMIT = 60;   // 一次最多铺这么多，再多画布会挤成一团
@@ -1878,9 +1881,11 @@ window.Canvas = (function () {
               label: i.id, kw: [i.note, (i.tags || []).join(' ')].filter(Boolean).join(' ')
             }));
           } else {
-            items = (window.REF_DATA?.[lib]?.items || []).map(it => ({
+            const data = window.REF_DATA?.[lib] || window.REF_DATA_EXTRA?.[lib];
+            const list = data?.items || (window.LIB && LIB.items(lib)) || [];
+            items = list.map(it => ({
               id: it.id, src: it.thumb, label: it.id.slice(0, 10),
-              kw: [it.kw, it.cat, it.style, it.name].filter(Boolean).join(' ')
+              kw: [it.kw, it.kwZh, it.cat, it.cls, it.style, it.name, it.tags].filter(Boolean).join(' ')
             }));
           }
 
