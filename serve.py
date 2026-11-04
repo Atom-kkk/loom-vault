@@ -1505,7 +1505,8 @@ class Installer:
         if sys.platform == "darwin":
             return "pypi"
         if shutil.which("nvidia-smi"):
-            return "cu124"
+            # cu126：cu124 源已停更（最高 torch 2.6.0），而新版 ComfyUI 需要 torch ≥ 2.7
+            return "cu126"
         return "cpu"
 
     def _ensure_torch(self, py, flavor, mirror):

@@ -1080,8 +1080,8 @@
                 <select id="inst-torch">
                   <option value="auto">PyTorch：自动判断</option>
                   <option value="cpu">PyTorch：纯 CPU（小、慢）</option>
-                  <option value="cu124">PyTorch：CUDA 12.4</option>
-                  <option value="cu126">PyTorch：CUDA 12.6</option>
+                  <option value="cu124">PyTorch：CUDA 12.4（旧卡手动选，torch 2.6）</option>
+                  <option value="cu126">PyTorch：CUDA 12.6（NVIDIA 默认，推荐）</option>
                 </select>
                 <label class="install-check"><input type="checkbox" id="inst-mirror" checked> 用国内镜像加速</label>
               </div>
