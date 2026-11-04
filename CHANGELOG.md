@@ -2,6 +2,16 @@
 
 本项目所有值得注意的改动都会记录在此。
 
+## [0.2.1] - 2026-11-04
+
+### 修复（桌面打包 / CI）
+
+- CI 检出后缺少 `desktop/runtime`（被 .gitignore 排除），`stage-web.mjs` 直接拒绝打包；
+  现在按 runner 架构从 python-build-standalone 下载对应 standalone Python（macOS arm64 / x64、Windows x64）
+- Windows 打包显式指定 `--win --x64`，避免在 Apple Silicon runner 上默认产出 arm64 包
+- `stage-web.mjs` 兼容 Windows standalone Python 的根目录 `python.exe` 布局
+- Pages 部署前校验覆盖六个参考库
+
 ## [0.2.0] - 2026-11-04
 
 ### 新增（三个姊妹素材库接入参考图库）

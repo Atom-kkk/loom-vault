@@ -25,6 +25,7 @@ jobs:
               desktop/dist/*-arm64-mac.zip
             build_cmd: npm run stage
             eb_args: --mac --arm64
+            python_asset: cpython-3.12.16+20261026-aarch64-apple-darwin-install_only.tar.gz
           - os: macos-13
             name: macOS (Intel)
             artifact: Loom-macOS-x64
@@ -33,6 +34,7 @@ jobs:
               desktop/dist/*.zip
             build_cmd: npm run stage
             eb_args: --mac --x64
+            python_asset: cpython-3.12.16+20261026-x86_64-apple-darwin-install_only.tar.gz
           - os: windows-latest
             name: Windows
             artifact: Loom-Windows
@@ -40,6 +42,7 @@ jobs:
               desktop/dist/*.exe
             build_cmd: npm run stage
             eb_args: --win --x64
+            python_asset: cpython-3.12.16+20261026-x86_64-pc-windows-msvc-install_only.tar.gz
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
@@ -58,7 +61,30 @@ jobs:
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
         run: npm ci --no-audit --no-fund
 
+      # desktop/runtime 是 .gitignore 里的二进制，CI 检出后没有它。
+      # 从 python-build-standalone 下载对应的 standalone 解释器，
+      # 这样打出来的 dmg / exe 才能真正「双击即用」。
+      - name: Fetch standalone Python
+        shell: bash
+        env:
+          PY_ASSET: ${{ matrix.python_asset }}
+        run: |
+          set -e
+          url="https://github.com/astral-sh/python-build-standalone/releases/download/20261026/${PY_ASSET}"
+          mkdir -p desktop/runtime
+          curl -fsSL --retry 5 --retry-delay 2 -o /tmp/python-standalone.tar.gz "$url"
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            mkdir -p desktop/runtime/python-win
+            tar -xzf /tmp/python-standalone.tar.gz -C desktop/runtime/python-win --strip-components=1
+            test -f desktop/runtime/python-win/python.exe
+          else
+            mkdir -p desktop/runtime/python
+            tar -xzf /tmp/python-standalone.tar.gz -C desktop/runtime/python --strip-components=1
+            test -x desktop/runtime/python/bin/python3
+          fi
+
       - name: Debug electron install
+        continue-on-error: true
         working-directory: desktop
         run: |
           echo "electron pkg version: $(node -e "console.log(require('electron/package.json').version)" 2>&1)"
