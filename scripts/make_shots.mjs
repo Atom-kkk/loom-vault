@@ -250,14 +250,9 @@ try {
   await sleep(1200);
   await shot('11-composer', '提示词组合台');
 
-  await ev(`(async()=>{ await Vault.go('snippets'); return 1 })()`);
-  await sleep(1200);
-  await shot('12-snippets', '提示词片段库');
-
   /* ============ 资产 ============ */
   for (const [view, file, note] of [
     ['models', '13-models', '模型库'],
-    ['loras', '14-loras', 'LoRA 列表'],
     ['workflows', '15-workflows', '工作流列表（含内置 KREA2）'],
     ['categories', '16-categories', '分类管理']
   ]) {
