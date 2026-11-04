@@ -176,7 +176,16 @@ try {
   await sleep(300);
 
   /* ============ 画布 ============ */
-  await ev(`(async()=>{ await Vault.go('canvas'); return 1 })()`);
+  // 画布状态会随 IndexedDB 持久化，复用 /tmp profile 再跑时上一轮的三件套会残留，
+  // 导致「空画布」拍到节点。这里显式清空并重进视图，保证每次都是真的空画布。
+  await ev(`(async() => {
+    await Vault.go('canvas');
+    const cvs = Canvas.current;
+    if (cvs) { cvs.nodes = []; cvs.edges = []; cvs.view = { x: 0, y: 0, k: 1 }; }
+    await Vault.go('gallery');
+    await Vault.go('canvas');
+    return Canvas.current ? Canvas.current.nodes.length : -1;
+  })()`);
   await sleep(1200);
   await shot('05-canvas-empty', '空画布：工具条、小地图、提示条');
 
