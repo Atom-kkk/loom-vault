@@ -263,9 +263,55 @@ describe('uiToApi', () => {
     assert.equal(r.api['1']._meta.title, 'prompt');
   });
 
-  test('缺失节点定义时抛明确错误', () => {
+  test('只剩无法识别的节点时，报「没有可执行的节点」', () => {
     const bad = { nodes: [{ id: 1, type: 'NotInstalled', inputs: [], widgets_values: [] }], links: [] };
-    assert.throws(() => comfy.uiToApi(bad, objectInfo), /找不到节点/);
+    assert.throws(() => comfy.uiToApi(bad, objectInfo), /没有可执行的节点/);
+  });
+
+  test('未安装的纯注释节点（rgthree Label）跳过，不阻断转换', () => {
+    const wf = {
+      nodes: [
+        { id: 1, type: 'CLIPTextEncode', inputs: [], widgets_values: ['一只猫'] },
+        { id: 2, type: 'Label (rgthree)', inputs: [{ name: 'text', link: null }], widgets_values: ['这里写备注'] },
+        { id: 3, type: 'EmptyLatentImage', inputs: [], widgets_values: [512, 512, 1] }
+      ],
+      links: []
+    };
+    const r = comfy.uiToApi(wf, objectInfo);
+    assert.equal(Object.keys(r.api).length, 2, 'Label 不该出现在提交结果里');
+    assert.ok(r.warnings.some(w => w.includes('跳过')), '应该给一条跳过提示');
+    deep(r.api['3'].inputs, { width: 512, height: 512, batch_size: 1 });
+  });
+
+  test('缺失节点的输出被连线用到时仍然报错，并列出插件名', () => {
+    const wf = {
+      nodes: [
+        { id: 1, type: 'NotInstalled', inputs: [], widgets_values: [] },
+        {
+          id: 2, type: 'KSampler',
+          inputs: [{ name: 'model', link: 1 }, { name: 'positive', link: null }, { name: 'negative', link: null }],
+          widgets_values: [1, 'fixed', 20, 7]
+        }
+      ],
+      links: [[1, 1, 0, 2, 0, 'MODEL']]
+    };
+    assert.throws(() => comfy.uiToApi(wf, objectInfo), /找不到节点「NotInstalled」/);
+  });
+
+  test('多个缺失插件一次性列全', () => {
+    const wf = {
+      nodes: [
+        { id: 1, type: 'PluginA', inputs: [], widgets_values: [] },
+        { id: 2, type: 'PluginB', inputs: [], widgets_values: [] },
+        {
+          id: 3, type: 'KSampler',
+          inputs: [{ name: 'model', link: 1 }, { name: 'positive', link: 2 }, { name: 'negative', link: null }],
+          widgets_values: [1, 'fixed', 20, 7]
+        }
+      ],
+      links: [[1, 1, 0, 3, 0, 'MODEL'], [2, 2, 0, 3, 1, 'CONDITIONING']]
+    };
+    assert.throws(() => comfy.uiToApi(wf, objectInfo), /PluginA.*PluginB/);
   });
 });
 

@@ -2663,12 +2663,15 @@ window.Canvas = (function () {
         });
         const r = Comfy.uiToApi(json, info);
         stats = r.stats;
+        // 跳过的辅助节点（rgthree Label 之类）写进备注，卡片上直接能看见，
+        // 免得用户以为是"转换丢东西了"
+        const warnNote = r.warnings.length ? ` · ${r.warnings.slice(0, 2).join('；').slice(0, 80)}` : '';
         const apiWf = {
           ...baseWf,
           id: U.uid('wf'),
           name: (name || '工作流') + ' · API',
           format: 'api-json',
-          note: `由 UI 格式自动转换 · ${r.stats.nodes} 节点 / ${r.stats.links} 连线`,
+          note: `由 UI 格式自动转换 · ${r.stats.nodes} 节点 / ${r.stats.links} 连线${warnNote}`,
           content: JSON.stringify(r.api)
         };
         await DB.put('workflows', apiWf);

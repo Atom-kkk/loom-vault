@@ -854,15 +854,59 @@ window.Comfy = (function () {
     const warnings = [];
     let widgetCount = 0, linkedCount = 0;
 
+    // 很多分享出来的工作流（B 站 / 网盘那批尤其常见）会带 rgthree 的 Label、
+    // Fast Groups 这类**纯注释节点**：只负责在画布上显示文字，不参与出图，
+    // 用户通常也没装对应插件。以前只要遇到一个没装的节点类型就整个报错，
+    // 现在先扫一遍：
+    //   · 输出没有被任何「会提交的节点」引用的缺失节点 → 直接跳过（纯注释）
+    //   · 输出真被连线用到的缺失节点 → 才算缺插件，并且一次性列全
+    const FRONTEND_ONLY = new Set(['Note', 'MarkdownNote', 'Reroute', 'PrimitiveNode']);
+    const referencedOrigin = new Set();
+    for (const l of (uiWf.links || [])) {
+      let oid, tid;
+      if (Array.isArray(l)) { oid = l[1]; tid = l[3]; }
+      else if (l && l.id != null) { oid = l.origin_id; tid = l.target_id; }
+      else continue;
+      const tn = nodesById[tid];
+      // 连到 Note / PrimitiveNode 上的线不算「真被使用」；
+      // Reroute 要除外 —— 它是直通节点，源头实际上仍被下游用到
+      if (tn && FRONTEND_ONLY.has(tn.type) && tn.type !== 'Reroute') continue;
+      referencedOrigin.add(String(oid));
+    }
+
+    const skipUnknown = new Set();
+    const missingUsed = [];
+    for (const node of uiWf.nodes) {
+      if (!node || node.type == null) continue;
+      if (FRONTEND_ONLY.has(node.type)) continue;
+      if (node.mode === 2 || node.mode === 4) continue;
+      if (objectInfo[node.type]) continue;
+      if (referencedOrigin.has(String(node.id))) missingUsed.push(node.type);
+      else skipUnknown.add(String(node.id));
+    }
+    if (missingUsed.length) {
+      const uniq = [...new Set(missingUsed)];
+      throw new Error(
+        `ComfyUI 里找不到节点${uniq.map(t => `「${t}」`).join('')}，确认对应插件已安装`
+      );
+    }
+    if (skipUnknown.size) {
+      warnings.push(`已跳过 ${skipUnknown.size} 个未安装的辅助节点（不参与出图，通常是 rgthree Label / 注释）`);
+    }
+
     for (const node of uiWf.nodes) {
       if (!node || node.type == null) continue;
       // 纯前端节点不提交
-      if (['Note', 'MarkdownNote', 'Reroute', 'PrimitiveNode'].includes(node.type)) continue;
+      if (FRONTEND_ONLY.has(node.type)) continue;
       if (node.mode === 2) { warnings.push(`${node.type} 已静音，已跳过`); continue; }
       if (node.mode === 4) { warnings.push(`${node.type} 已旁路，连线已直通到它的上游`); continue; }
 
       const def = objectInfo[node.type];
-      if (!def) throw new Error(`ComfyUI 里找不到节点「${node.type}」，确认对应插件已安装`);
+      if (!def) {
+        // 预扫描已放行「输出没人用」的缺失节点
+        if (skipUnknown.has(String(node.id))) continue;
+        throw new Error(`ComfyUI 里找不到节点「${node.type}」，确认对应插件已安装`);
+      }
 
       const specs = { ...(def.input?.required || {}), ...(def.input?.optional || {}) };
       const values = Array.isArray(node.widgets_values)
