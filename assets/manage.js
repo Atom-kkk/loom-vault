@@ -33,6 +33,9 @@
     const files = (m.files || []).length;
     const wfs = (m.workflowIds || []).length;
     const loras = (m.loraIds || []).length;
+    // 云端模型走 API，没有本地文件 / LoRA / 工作流关联，这一行统计对它永远是 0，
+    // 摆着反而像出错。只在本地部署的模型上显示。
+    const showMeta = m.type === 'local';
     return `<div class="model-card" data-act="model-open" data-id="${m.id}">
       <div class="model-card-head">
         <div class="model-card-icon">${esc((m.name || '?').slice(0, 2).toUpperCase())}</div>
@@ -48,12 +51,12 @@
         ${m.endpoint ? `<span class="badge mono">${esc(m.endpoint.replace(/^https?:\/\//, ''))}</span>` : ''}
         ${m.access ? `<span class="badge">${esc(m.access)}</span>` : ''}
       </div>
-      <div class="model-meta">
+      ${showMeta ? `<div class="model-meta">
         <span>出图 <b>${imgs}</b></span>
         <span>文件 <b>${files}</b></span>
         <span>LoRA <b>${loras}</b></span>
         <span>工作流 <b>${wfs}</b></span>
-      </div>
+      </div>` : ''}
     </div>`;
   }
 
@@ -271,6 +274,8 @@
     const loras = (m.loraIds || []).map(x => V.state.loras.find(l => l.id === x)).filter(Boolean);
     const wfs = (m.workflowIds || []).map(x => V.state.workflows.find(w => w.id === x)).filter(Boolean);
     const files = m.files || [];
+    // 云端模型没有本地部署文件，这一栏对它永远是空的，直接不显示
+    const showFiles = m.type === 'local' || files.length > 0;
 
     openModal({
       title: m.name,
@@ -282,14 +287,14 @@
           ${m.endpoint ? `<span class="badge mono">${esc(m.endpoint)}</span>` : ''}
           ${m.access ? `<span class="badge">${esc(m.access)}</span>` : ''}
           <div style="flex:1"></div>
-          ${m.endpoint ? `<button class="btn sm" data-open-url="${esc(m.endpoint)}">${icon('link', 12)} 打开 ComfyUI</button>` : ''}
+          ${m.endpoint ? `<button class="btn sm" data-open-url="${esc(m.endpoint)}">${icon('link', 12)} ${m.type === 'local' ? '打开 ComfyUI' : '打开接口地址'}</button>` : ''}
           <button class="btn sm" data-act="model-edit" data-id="${m.id}">${icon('edit', 12)} 编辑</button>
           <button class="btn sm" data-act="model-manifest" data-id="${m.id}">${icon('down', 12)} 部署清单</button>
         </div>
 
         ${m.desc ? `<p style="font-size:12.5px;color:var(--text-2);line-height:1.7;margin:0 0 14px">${esc(m.desc)}</p>` : ''}
 
-        <div class="section" style="margin-top:0">
+        ${showFiles ? `<div class="section" style="margin-top:0">
           <div class="section-title">部署文件（${files.length}）<span></span></div>
           ${files.length ? `<table class="file-table">
             <thead><tr><th style="width:130px">类型</th><th>文件</th><th style="width:80px">体积</th><th style="width:70px">链接</th></tr></thead>
@@ -300,7 +305,7 @@
               <td>${f.url ? `<a href="${esc(f.url)}" target="_blank" rel="noopener">下载</a>` : '<span style="color:var(--text-3)">—</span>'}</td>
             </tr>`).join('')}</tbody>
           </table>` : `<p style="font-size:12px;color:var(--text-3);margin:0">还没有登记文件。点「编辑」把 checkpoint / LoRA / VAE 的下载链接加进去。</p>`}
-        </div>
+        </div>` : ''}
 
         ${loras.length ? `<div class="section">
           <div class="section-title">关联 LoRA（${loras.length}）<span></span></div>
