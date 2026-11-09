@@ -602,11 +602,11 @@
             <div class="model-card-icon" style="background:var(--panel-3);color:var(--text-2)">${icon('flow', 17)}</div>
             <div style="min-width:0">
               <h3>${esc(w.name)}</h3>
-              <div class="sub">${esc(main || m?.name || '未关联模型')} · ${esc(w.format === 'ui-json' ? 'UI 格式' : w.format === 'api-json' ? 'API 格式' : (w.format || 'json'))}</div>
+              <div class="sub">${esc(main || m?.name || '未关联模型')} · ${esc(isUiFormat(w) ? 'UI 格式' : w.format === 'api-json' ? 'API 格式' : (w.format || 'json'))}</div>
             </div>
             <div class="spacer"></div>
             <div style="display:flex;gap:4px">
-              ${w.format === 'ui-json' ? `<button class="icon-btn" data-act="wf-convert" data-id="${w.id}" title="转成可提交的 API 格式">${icon('spark', 14)}</button>` : ''}
+              ${isUiFormat(w) ? `<button class="icon-btn" data-act="wf-convert" data-id="${w.id}" title="转成可提交的 API 格式">${icon('spark', 14)}</button>` : ''}
               <button class="icon-btn" data-act="wf-models" data-id="${w.id}" title="切换主模型 / CLIP / VAE / LoRA">${icon('cpu', 14)}</button>
               <button class="icon-btn" data-act="wf-download" data-id="${w.id}" title="下载">${icon('down', 14)}</button>
               <button class="icon-btn" data-act="wf-del" data-id="${w.id}" title="删除">${icon('trash', 14)}</button>
@@ -646,6 +646,9 @@
         try {
           const j = JSON.parse(content);
           nodes = Array.isArray(j.nodes) ? j.nodes.length : Object.keys(j).length;
+          // UI 格式（ComfyUI 里普通「保存」）带 nodes 数组；API 格式是 { "3": { class_type, inputs } }
+          // 以前这里一律写成 'json'，导致卡片上不显示「转 API」的闪电按钮
+          format = Array.isArray(j.nodes) ? 'ui-json' : 'api-json';
         } catch { toast(`${f.name} 不是合法 JSON`, 'err'); return; }
       } else {
         format = 'png';
@@ -655,6 +658,8 @@
         try {
           const j = JSON.parse(content);
           nodes = Array.isArray(j.nodes) ? j.nodes.length : Object.keys(j).length;
+          // PNG 里可能是 UI 也可能是 API；format 保留 png（下载后缀要用），
+          // 是否显示「转 API」按钮由 isUiFormat() 按内容判断
         } catch { }
       }
 
@@ -739,6 +744,22 @@
     return '';
   }
 
+  // 这份工作流是不是 UI 格式（能转 API）。
+  // format 字段不可全信：早期版本上传 JSON 时一律标成 'json'，PNG 里存的也可能是 UI，
+  // 所以这里再按内容兜底判断一次，免得闪电按钮不显示。
+  function isUiFormat(w) {
+    if (!w) return false;
+    if (w.format === 'api-json') return false;
+    if (w.format === 'ui-json') return true;
+    const c = typeof w.content === 'string' ? w.content : '';
+    return /"nodes"\s*:\s*\[/.test(c.slice(0, 5000));
+  }
+
+  // 模型文件名在 ComfyUI 里统一用正斜杠；Windows 导出的工作流常带反斜杠
+  // （如 moss_image\xxx.safetensors），macOS / Linux 上会被当成文件名的一部分，
+  // 既匹配不上候选列表，提交也给不到 ComfyUI。这里统一归一化。
+  const normModelName = s => String(s ?? '').replace(/\\/g, '/');
+
   // 取 ComfyUI 节点定义里的下拉候选（兼容 [[...]] 与 [[...], {...}] 两种写法）
   function comboList(info, ct, field) {
     const def = info && info[ct];
@@ -754,37 +775,47 @@
     const api = wfApi(w);
     if (!api) return toast('这是 UI 格式工作流，先点闪电图标转成 API 格式', 'err');
 
+    // 只复用 60 秒内的缓存：往 loras/ 里丢新模型后，重开这个弹窗就能看到，
+    // 不必等默认的 24 小时缓存过期，也不用重启应用。
     let info = {};
-    try { info = await Comfy.objectInfoCached(); }
+    try { info = await Comfy.objectInfoCached(60e3); }
     catch { toast('引擎没连上，只能手动填文件名（建议先启动引擎）', 'err'); }
 
-    const rows = [];
-    Object.keys(api).forEach(id => {
-      const node = api[id];
-      const ct = node && node.class_type;
-      if (!ct || !node.inputs) return;
-      MODEL_SLOTS.filter(sl => sl.node === ct).forEach(sl => {
-        if (!Object.prototype.hasOwnProperty.call(node.inputs, sl.field)) return;
-        rows.push({
-          id, ct, field: sl.field, label: sl.label, kind: sl.kind,
-          value: node.inputs[sl.field],
-          options: comboList(info, ct, sl.field),
-          strength: (typeof node.inputs.strength_model === 'number') ? 'strength_model'
-            : (typeof node.inputs.strength_clip === 'number') ? 'strength_clip' : '',
-          strengthVal: node.inputs.strength_model ?? node.inputs.strength_clip ?? ''
+    const buildRows = inf => {
+      const list = [];
+      Object.keys(api).forEach(id => {
+        const node = api[id];
+        const ct = node && node.class_type;
+        if (!ct || !node.inputs) return;
+        MODEL_SLOTS.filter(sl => sl.node === ct).forEach(sl => {
+          if (!Object.prototype.hasOwnProperty.call(node.inputs, sl.field)) return;
+          list.push({
+            id, ct, field: sl.field, label: sl.label, kind: sl.kind,
+            value: node.inputs[sl.field],
+            options: comboList(inf, ct, sl.field),
+            strength: (typeof node.inputs.strength_model === 'number') ? 'strength_model'
+              : (typeof node.inputs.strength_clip === 'number') ? 'strength_clip' : '',
+            strengthVal: node.inputs.strength_model ?? node.inputs.strength_clip ?? ''
+          });
         });
       });
-    });
+      return list;
+    };
 
+    let rows = buildRows(info);
     if (!rows.length) return toast('这个工作流里没有可切换的模型加载节点', 'err');
 
     const rowHTML = (r, i) => {
       const dl = `wfm-dl-${i}`;
-      const missing = r.options.length && !r.options.includes(String(r.value));
+      const cur = normModelName(r.value);
+      // 候选列表来自 ComfyUI，统一是正斜杠；而 Windows 导出的工作流常写反斜杠
+      // （moss_image\xxx.safetensors），直接 includes 会误报「不在引擎列表里」。
+      // 这里按归一化后的名字比对，输入框也直接显示成正斜杠，保存时写回正斜杠。
+      const missing = r.options.length && !r.options.some(o => normModelName(o) === cur);
       return `<div class="wfm-row">
         <div class="wfm-kind">${esc(r.kind)}</div>
         <div class="wfm-main">
-          <input type="text" list="${dl}" data-wfm-i="${i}" value="${esc(String(r.value ?? ''))}"
+          <input type="text" list="${dl}" data-wfm-i="${i}" value="${esc(cur)}"
                  placeholder="${r.options.length ? '选一个或直接填文件名' : '填模型文件名'}">
           <datalist id="${dl}">${r.options.map(o => `<option value="${esc(o)}"></option>`).join('')}</datalist>
           <div class="wfm-sub">${esc(r.label)} · 节点 #${esc(String(r.id))}
@@ -799,10 +830,33 @@
       sub: '改完画布上的这个工作流会跟着用新模型（不需要重新上传）',
       wide: true,
       body: `<div class="wfm-list">${rows.map(rowHTML).join('')}</div>
-             ${!info || !Object.keys(info).length ? '<p class="hint" style="margin-top:10px">引擎未连接，候选列表为空，可以直接手填文件名。</p>' : `<p class="hint" style="margin-top:10px">候选来自当前引擎已识别的模型目录，共 ${rows.length} 处可切换。</p>`}`,
+             <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
+               <button class="btn small" id="wfm-refresh">刷新模型列表</button>
+               <span class="hint" id="wfm-hint">${!info || !Object.keys(info).length
+                 ? '引擎未连接，候选列表为空，可以直接手填文件名。'
+                 : `候选来自当前引擎已识别的模型目录，共 ${rows.length} 处可切换。`}</span>
+             </div>`,
       footer: `<button class="btn" data-close>取消</button>
                <button class="btn primary" id="wfm-save">保存</button>`,
       onMount: (box, close) => {
+        box.querySelector('#wfm-refresh').onclick = async ev => {
+          const btn = ev.currentTarget;
+          btn.disabled = true;
+          btn.textContent = '读取中…';
+          try {
+            const fresh = await Comfy.objectInfoCached(0);   // 0 = 强制绕过缓存
+            rows = buildRows(fresh);
+            box.querySelector('.wfm-list').innerHTML = rows.map(rowHTML).join('');
+            const loraCount = rows.filter(r => r.kind === 'LoRA').reduce((n, r) => n + r.options.length, 0);
+            box.querySelector('#wfm-hint').textContent =
+              `已刷新：共 ${rows.length} 处可切换${loraCount ? `，LoRA 候选 ${loraCount} 个` : ''}。`;
+          } catch (e) {
+            toast('刷新失败：' + (e.message || '引擎没连上'), 'err');
+          } finally {
+            btn.disabled = false;
+            btn.textContent = '刷新模型列表';
+          }
+        };
         box.querySelector('#wfm-save').onclick = async () => {
           const next = JSON.parse(JSON.stringify(api));
           let changed = 0;
@@ -811,7 +865,7 @@
             const st = box.querySelector(`[data-wfm-s="${i}"]`);
             const node = next[r.id];
             if (!node || !node.inputs) return;
-            const v = (inp?.value || '').trim();
+            const v = normModelName((inp?.value || '').trim());
             if (v && v !== node.inputs[r.field]) { node.inputs[r.field] = v; changed++; }
             if (r.strength && st) {
               const n = parseFloat(st.value);

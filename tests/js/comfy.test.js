@@ -315,6 +315,31 @@ describe('uiToApi', () => {
   });
 });
 
+/* ---------------- 模型路径归一化 ---------------- */
+describe('normalizeModelPaths', () => {
+  test('Windows 反斜杠的模型路径转成正斜杠', () => {
+    const api = {
+      3: { class_type: 'LoraLoader', inputs: { lora_name: 'moss_image\\MOSS-CC_街拍.safetensors', strength_model: 0.8 } },
+      4: { class_type: 'UNETLoader', inputs: { unet_name: 'sub\\dir\\m.safetensors' } }
+    };
+    const r = comfy.normalizeModelPaths(api);
+    assert.equal(r['3'].inputs.lora_name, 'moss_image/MOSS-CC_街拍.safetensors');
+    assert.equal(r['4'].inputs.unet_name, 'sub/dir/m.safetensors');
+    assert.equal(r['3'].inputs.strength_model, 0.8, '数字不要动');
+  });
+
+  test('提示词里的反斜杠不动（只有模型扩展名才转）', () => {
+    const api = { 5: { class_type: 'CLIPTextEncode', inputs: { text: '路径 C:\\Users\\me\\pic' } } };
+    const r = comfy.normalizeModelPaths(api);
+    assert.equal(r['5'].inputs.text, '路径 C:\\Users\\me\\pic');
+  });
+
+  test('已经是正斜杠的保持不变', () => {
+    const api = { 6: { class_type: 'LoraLoader', inputs: { lora_name: 'a/b.safetensors' } } };
+    assert.equal(comfy.normalizeModelPaths(api)['6'].inputs.lora_name, 'a/b.safetensors');
+  });
+});
+
 /* ---------------- 槽位摘要 ---------------- */
 test('slotSummary 生成人类可读摘要', () => {
   const s = comfy.parseSlots(slotWorkflow());

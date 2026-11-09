@@ -325,8 +325,12 @@ class Engine:
             "configured": self._state.get("paths", {}),
         }
 
-    def _count_models(self, path):
-        """返回 (可用模型数, 正在下载数)。"""
+    def _count_models(self, path, depth=0):
+        """返回 (可用模型数, 正在下载数)。
+
+        子目录也要算 —— ComfyUI 允许在 loras/ 下按文件夹分类（如 loras/moss_image/x.safetensors），
+        只数顶层文件会让界面上的数字偏小。限制 3 层并跳过隐藏目录，避免扫到缓存。
+        """
         ready = partial = 0
         try:
             names = os.listdir(path)
@@ -335,7 +339,11 @@ class Engine:
         for f in names:
             low = f.lower()
             full = os.path.join(path, f)
-            if not os.path.isfile(full):
+            if os.path.isdir(full):
+                if depth < 3 and not f.startswith('.'):
+                    r, p = self._count_models(full, depth + 1)
+                    ready += r
+                    partial += p
                 continue
             if low.endswith(self.PARTIAL_MARKS):
                 partial += 1

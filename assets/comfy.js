@@ -457,8 +457,27 @@ window.Comfy = (function () {
     return api;
   }
 
+  // Windows 导出的工作流里，模型 / LoRA 文件名常写成 moss_image\xxx.safetensors
+  // （反斜杠）。ComfyUI 内部统一用正斜杠，macOS / Linux 上反斜杠会被当成文件名的
+  // 一部分，直接找不到文件。提交前把这类值统一成正斜杠 —— 只动"带反斜杠且以模型
+  // 扩展名结尾"的字符串，不会误伤提示词之类的内容。
+  const MODEL_PATH_EXT = /\.(safetensors|ckpt|pt|pth|bin|gguf|sft|onnx)$/i;
+  function normalizeModelPaths(apiPrompt) {
+    for (const id of Object.keys(apiPrompt || {})) {
+      const node = apiPrompt[id];
+      if (!node || !node.inputs) continue;
+      for (const k of Object.keys(node.inputs)) {
+        const v = node.inputs[k];
+        if (typeof v === 'string' && v.includes('\\') && MODEL_PATH_EXT.test(v)) {
+          node.inputs[k] = v.replace(/\\/g, '/');
+        }
+      }
+    }
+    return apiPrompt;
+  }
+
   async function queue(apiPrompt) {
-    apiPrompt = stripPluginSeeds(apiPrompt);
+    apiPrompt = normalizeModelPaths(stripPluginSeeds(apiPrompt));
     let res;
     try {
       res = await req('/prompt', {
@@ -1356,6 +1375,7 @@ window.Comfy = (function () {
   return {
     load, save, cfg: () => cfg, base,
     ping, objectInfo, objectInfoCached, queueInfo, uiToApi, widgetKeysOf,
+    normalizeModelPaths,
     uploadImage, queue, history, fetchImage, run,
     openWs, closeWs, wsConnected: () => !!ws && ws.readyState === 1,
     analyzeApi, applyInputs, extractImages, cancelAll, waitFor,
