@@ -467,7 +467,9 @@ select {
   color: var(--text-2);
   text-align: center;
 }
-.empty svg { width: 42px; height: 42px; opacity: .5; color: var(--text-3); }
+/* 只给空状态自己的占位大图标定尺寸：以前写成 `.empty svg`，
+   会把空状态里按钮中的小图标也一起撑成 42px（图库空态那个上传按钮就是这么坏的） */
+.empty > svg { width: 42px; height: 42px; opacity: .5; color: var(--text-3); }
 .empty b { font-size: 15px; color: var(--text); font-weight: 650; }
 .empty p { margin: 0; font-size: 13px; max-width: 400px; line-height: 1.75; color: var(--text-2); }
 

@@ -1338,7 +1338,6 @@
             <div style="margin-top:14px;font-size:12px;color:var(--text-2)">
               当前：<b style="color:var(--text)">${V.state.images.length}</b> 张图 ·
               <b style="color:var(--text)">${V.state.models.length}</b> 个模型 ·
-              <b style="color:var(--text)">${V.state.loras.length}</b> 个 LoRA ·
               <b style="color:var(--text)">${V.state.workflows.length}</b> 个工作流 ·
               <b style="color:var(--text)">${AI.agents().length}</b> 个智能体
             </div>
