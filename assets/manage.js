@@ -688,14 +688,18 @@
     if (!w) return;
     try {
       toast('正在读取 ComfyUI 节点定义…');
-      const info = await Comfy.objectInfoCached();
+      // 转换要读最新节点定义：刚装完插件 / 刚放新模型时不该被 24 小时缓存挡住
+      const info = await Comfy.objectInfoCached(0);
       const r = Comfy.uiToApi(JSON.parse(w.content), info);
+      const skipped = r.warnings.filter(x => x.includes('跳过')).length;
       const apiWf = {
         ...w,
         id: U.uid('wf'),
         name: w.name + ' · API',
         format: 'api-json',
-        note: `由 UI 格式转换 · ${r.stats.nodes} 节点 / ${r.stats.links} 连线`,
+        note: `由 UI 格式转换 · ${r.stats.nodes} 节点 / ${r.stats.links} 连线`
+          + (skipped ? ` · 已跳过 ${skipped} 个未安装的辅助节点` : '')
+          + (r.warnings.length > skipped ? ` · ${r.warnings.length - skipped} 条其他提示` : ''),
         content: JSON.stringify(r.api),
         createdAt: Date.now()
       };
